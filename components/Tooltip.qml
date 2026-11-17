@@ -1,0 +1,77 @@
+import QtQuick
+import "../i18n" as Locale
+
+// macOS-style tooltip for an icon-only button: put it inside the button with
+// the button's name. It appears under the button (above, with `above`) after
+// a short hover, drawn on top of the whole window so no card can cover it.
+//
+//   Rectangle { ...; Tooltip { text: "Settings" } }
+Item {
+  id: tip
+  property string text: ""
+  property bool above: false
+  property bool shown: false
+  property var theme: null
+  // Wraps longer text at this width (0: one line, however long).
+  property int maxWidth: 0
+  // Whether the pointer is on the button. A MouseArea's containsMouse goes
+  // stale beside this tooltip's HoverHandler, so a button that shows its
+  // hover should follow this instead.
+  readonly property bool hovered: hover.hovered
+  readonly property Item overlay: tip.Window.contentItem
+  anchors.fill: parent
+  // Above the button's own MouseArea, which would otherwise take the hover;
+  // the HoverHandler only watches, so clicks and hover still reach the button.
+  z: 100
+
+  HoverHandler {
+    id: hover
+    // Qt's default blocks the hover of everything under it: a button whose
+    // look follows its hover (a × that shows while its banner is hovered)
+    // would lose it the moment the pointer reached it, and flicker.
+    blocking: false
+    onHoveredChanged: if (!hovered) tip.shown = false
+  }
+  Timer {
+    interval: 550
+    running: hover.hovered && tip.text !== "" && !tip.shown
+    onTriggered: { bubble.place(); tip.shown = true }
+  }
+
+  Rectangle {
+    id: bubble
+    parent: tip.overlay
+    z: 1000
+    visible: opacity > 0.01
+    enabled: false
+    opacity: tip.shown ? 1 : 0
+    Behavior on opacity { MotionAnimation { theme: tip.theme; pace: tip.shown ? "fade" : "exit"; curve: "fade" } }
+    scale: tip.shown ? 1 : 0.97
+    transformOrigin: tip.above ? Item.Bottom : Item.Top
+    Behavior on scale { MotionAnimation { theme: tip.theme; pace: tip.shown ? "quick" : "exit" } }
+    width: label.width + 16
+    height: label.height + 8
+    radius: 6
+    color: "#2c2c2e"
+    border.width: 1
+    border.color: Qt.rgba(1, 1, 1, 0.1)
+    // Centered on the button, kept on screen.
+    function place() {
+      if (!tip.overlay) return
+      var p = tip.mapToItem(tip.overlay, tip.width / 2, tip.above ? 0 : tip.height)
+      x = Math.max(4, Math.min(tip.overlay.width - width - 4, p.x - width / 2))
+      y = tip.above ? p.y - height - 6 : p.y + 6
+    }
+    Text {
+      id: label
+      anchors.centerIn: parent
+      text: Locale.I18n.tr(tip.text)
+      width: tip.maxWidth > 0 ? Math.min(implicitWidth, tip.maxWidth) : implicitWidth
+      wrapMode: tip.maxWidth > 0 ? Text.WrapAtWordBoundaryOrAnywhere : Text.NoWrap
+      color: "#f2f2f7"
+      font.family: tip.theme.textFontFamily
+      font.letterSpacing: tip.theme.tracking(tip.theme.textFontFamily, tip.theme.size.callout)
+      font.pixelSize: tip.theme.size.callout
+    }
+  }
+}

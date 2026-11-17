@@ -1,0 +1,50 @@
+import QtQuick
+import "../../i18n" as Locale
+import "../../components"
+
+// The timer on the resting island while it's set, as iOS's live activity:
+// its ring leading and the time left trailing, both dimmed while it's
+// paused, the clock between them. `timer` is the TimerAddon.
+Item {
+  id: pill
+  required property var timer
+  readonly property var host: timer.host
+  // Dims and brightens with a short fade on pause and resume.
+  property color ink: timer.phase === "paused" ? timer.tintDim : timer.tint
+  Behavior on ink { MotionColorAnimation { theme: pill.host.theme } }
+
+  opacity: timer.pillShown ? 1 : 0
+  visible: opacity > 0.01
+  Behavior on opacity { MotionAnimation { theme: pill.host.theme; pace: "fade"; curve: "fade" } }
+
+  PillReveal { id: reveal; theme: pill.host.theme; shown: pill.timer.pillShown }
+
+  TimerRing {
+    opacity: reveal.leadingIn
+    PillPart { progress: reveal.leadingIn }
+    anchors.left: parent.left
+    anchors.leftMargin: 13
+    anchors.verticalCenter: parent.verticalCenter
+    width: 20
+    height: 20
+    progress: pill.timer.progress
+    color: pill.ink
+    track: Qt.rgba(1, 159 / 255, 10 / 255, 0.25)
+    thickness: 3
+  }
+  RollingText {
+    theme: pill.host.theme
+    opacity: reveal.trailingIn
+    PillPart { progress: reveal.trailingIn }
+    anchors.right: parent.right
+    anchors.rightMargin: 16
+    anchors.verticalCenter: parent.verticalCenter
+    text: Locale.I18n.tr(pill.timer.timeText(pill.timer.remaining))
+    color: pill.ink
+    font.family: pill.host.theme.textFontFamily
+    font.pixelSize: pill.host.theme.size.body
+    font.weight: Font.Medium
+    font.features: { "tnum": 1, "case": 1 }
+    font.letterSpacing: pill.host.theme.tracking(pill.host.theme.textFontFamily, pill.host.theme.size.body)
+  }
+}

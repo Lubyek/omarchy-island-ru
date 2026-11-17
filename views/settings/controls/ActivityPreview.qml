@@ -1,0 +1,206 @@
+pragma ComponentBehavior: Bound
+import QtQuick
+import "../../../i18n" as Locale
+import QtQuick.Effects
+import "../../../components"
+
+// Static samples only: no live trackers, personal data, or ambient animations.
+Item {
+  id: preview
+  required property var view
+  required property string kind
+  readonly property color accent: view.accent
+  readonly property string iconFont: view.host.theme.fontFamily
+  readonly property bool colorfulActivities: !!view.settings.colorfulLiveActivities
+  readonly property bool transfer: kind === "downloads" || kind === "updates"
+  readonly property color positiveColor: colorfulActivities ? preview.view.host.theme.system.green : accent
+  readonly property color recordingColor: colorfulActivities ? preview.view.host.theme.system.red : accent
+  // Each kind's sample: the leading glyph (in glyphColor, accent by default),
+  // the label after it (centred and bold, as the pill's clock, with
+  // `clock`), and the status trailing (in statusColor). Kinds with
+  // their own layout (bluetooth, media, workspace, volume) draw the rest below.
+  readonly property var sample: ({
+    media: { glyph: "󰝚", glyphColor: "#ffffff" },
+    bluetooth: { glyph: "󰋋", glyphColor: "#ffffff" },
+    playback: { glyph: "󰏤", glyphColor: "#ffffff", label: "Song Title - Artist" },
+    clipboard: { glyph: "󰆏", label: "Hello, world!", status: "Copied", statusColor: accent },
+    downloads: { glyph: "󰁅", glyphColor: positiveColor, label: "12:34", clock: true, status: "2 MB/s", statusColor: positiveColor },
+    updates: { glyph: "󰏗", glyphColor: positiveColor, label: "12:34", clock: true, status: "Updating", statusColor: positiveColor },
+    network: { glyph: "󰤨", label: "Home", status: "Connected", statusColor: accent },
+    battery: { label: "Charging", status: "64%", statusColor: positiveColor },
+    recording: { label: "12:34", clock: true, status: "01:23", statusColor: recordingColor }
+  })[kind] || ({})
+  readonly property string glyph: sample.glyph || ""
+
+  Rectangle {
+    id: pill
+    anchors.centerIn: parent
+    width: 196
+    height: preview.kind === "bluetooth" ? 52 : 40
+    scale: Math.min(1.06, preview.width / width)
+    radius: height / 2
+    color: preview.view.host.theme.background
+    border.width: 0
+    clip: true
+    layer.enabled: visible
+    layer.effect: MultiEffect {
+      shadowEnabled: true
+      shadowColor: "#000000"
+      shadowOpacity: 0.28
+      shadowBlur: 0.55
+      shadowVerticalOffset: 3
+    }
+
+    VolumeLevel {
+      anchors.fill: parent
+      visible: preview.kind === "volume" || preview.kind === "brightness"
+      theme: preview.view.host.theme
+      level: preview.kind === "brightness" ? 0.4 : 0.18
+      icon: preview.kind === "brightness" ? "󰍹" : ""
+      animateLevel: false
+    }
+    Row {
+      anchors.centerIn: parent
+      visible: preview.kind === "workspace"
+      spacing: 9
+      Repeater {
+        model: 5
+        delegate: Item {
+          id: workspace
+          required property int index
+          width: 20; height: 20
+          Rectangle {
+            anchors.centerIn: parent
+            width: workspace.index === 1 ? 24 : 6
+            height: workspace.index === 1 ? 18 : 6
+            radius: height / 2
+            color: workspace.index === 1 ? (preview.colorfulActivities ? "#ffffff" : preview.accent) : workspace.index < 3 ? "#aaaaaa" : "#444444"
+            Text {
+              anchors.centerIn: parent
+              visible: workspace.index === 1
+              text: "2"
+              color: preview.colorfulActivities ? "#000000" : preview.view.accentInk
+              font.family: preview.view.host.theme.textFontFamily
+              font.letterSpacing: preview.view.host.theme.tracking(preview.view.host.theme.textFontFamily, preview.view.host.theme.size.subheadline)
+              font.pixelSize: preview.view.host.theme.size.subheadline
+              font.weight: Font.Bold
+            }
+          }
+        }
+      }
+    }
+
+    // Shared leading glyph: album-cover tile, transfer ring, or device icon.
+    Rectangle {
+      id: leading
+      x: preview.kind === "media" ? 8 : 12
+      anchors.verticalCenter: parent.verticalCenter
+      width: 28; height: 28
+      visible: preview.glyph !== ""
+      radius: preview.transfer ? 14 : 7
+      color: preview.kind === "media" ? Qt.tint("#252525", preview.view.host.theme.accentFill("ring")) : "transparent"
+      border.width: preview.transfer ? 2 : 0
+      border.color: preview.transfer ? preview.positiveColor : preview.accent
+      Text {
+        anchors.centerIn: parent
+        visible: preview.glyph !== ""
+        text: Locale.I18n.tr(preview.glyph)
+        color: preview.sample.glyphColor || preview.accent
+        font.family: preview.iconFont
+        font.pixelSize: preview.kind === "bluetooth" ? preview.view.host.theme.px(27) : preview.transfer ? preview.view.host.theme.px(13) : preview.view.host.theme.px(17)
+      }
+    }
+    Rectangle {
+      x: 17
+      anchors.verticalCenter: parent.verticalCenter
+      visible: preview.kind === "recording"
+      width: 10; height: 10; radius: 5
+      color: preview.recordingColor
+    }
+    BatteryIcon {
+      x: 12
+      anchors.verticalCenter: parent.verticalCenter
+      visible: preview.kind === "battery"
+      width: 25; height: 12
+      level: 64
+      charging: true
+      chargingColor: preview.positiveColor
+      lowColor: preview.colorfulActivities ? preview.view.host.theme.system.red : preview.accent
+    }
+    Text {
+      readonly property bool clock: !!preview.sample.clock
+      x: clock ? (parent.width - width) / 2 : preview.kind === "battery" ? 47 : 43
+      anchors.verticalCenter: parent.verticalCenter
+      visible: !!preview.sample.label
+      text: Locale.I18n.tr(preview.sample.label || "")
+      color: preview.view.host.theme.text
+      font.family: preview.view.host.theme.textFontFamily
+      font.letterSpacing: preview.view.host.theme.tracking(preview.view.host.theme.textFontFamily, clock ? preview.view.host.theme.px(12) : preview.view.host.theme.px(10))
+      font.pixelSize: clock ? preview.view.host.theme.px(12) : preview.view.host.theme.px(10)
+      font.weight: clock ? Font.DemiBold : Font.Normal
+    }
+    Text {
+      anchors.right: parent.right
+      anchors.rightMargin: 12
+      anchors.verticalCenter: parent.verticalCenter
+      visible: !!preview.sample.status
+      text: Locale.I18n.tr(preview.sample.status || "")
+      color: preview.sample.statusColor || "#ffffff"
+      font.family: preview.view.host.theme.textFontFamily
+      font.letterSpacing: preview.view.host.theme.tracking(preview.view.host.theme.textFontFamily, preview.view.host.theme.size.footnote)
+      font.pixelSize: preview.view.host.theme.size.footnote
+      font.weight: Font.DemiBold
+    }
+    Column {
+      x: 52
+      anchors.verticalCenter: parent.verticalCenter
+      visible: preview.kind === "bluetooth"
+      spacing: 1
+      Text {
+        text: Locale.I18n.tr("Connected")
+        color: "#888888"
+        font.family: preview.view.host.theme.textFontFamily
+        font.letterSpacing: preview.view.host.theme.tracking(preview.view.host.theme.textFontFamily, preview.view.host.theme.size.footnote)
+        font.pixelSize: preview.view.host.theme.size.footnote
+      }
+      Text { text: Locale.I18n.tr("Headphones"); color: preview.view.host.theme.text; font.family: preview.view.host.theme.textFontFamily; font.letterSpacing: preview.view.host.theme.tracking(preview.view.host.theme.textFontFamily, preview.view.host.theme.size.callout); font.pixelSize: preview.view.host.theme.size.callout }
+    }
+    Rectangle {
+      anchors.right: parent.right
+      anchors.rightMargin: 12
+      anchors.verticalCenter: parent.verticalCenter
+      visible: preview.kind === "bluetooth"
+      width: 30; height: 30; radius: 15
+      color: "transparent"
+      border.width: 2
+      border.color: preview.colorfulActivities ? preview.view.host.theme.system.green : preview.accent
+      Text { anchors.centerIn: parent; text: "72"; color: preview.colorfulActivities ? preview.view.host.theme.system.green : preview.accent; font.family: preview.view.host.theme.textFontFamily; font.letterSpacing: preview.view.host.theme.tracking(preview.view.host.theme.textFontFamily, preview.view.host.theme.size.footnote); font.pixelSize: preview.view.host.theme.size.footnote }
+    }
+    Text {
+      anchors.centerIn: parent
+      visible: preview.kind === "media"
+      text: "12:34"
+      color: preview.view.host.theme.text
+      font.family: preview.view.host.theme.textFontFamily
+      font.letterSpacing: preview.view.host.theme.tracking(preview.view.host.theme.textFontFamily, preview.view.host.theme.size.callout)
+      font.pixelSize: preview.view.host.theme.size.callout
+      font.weight: Font.DemiBold
+    }
+    Row {
+      anchors.right: parent.right
+      anchors.rightMargin: 15
+      anchors.verticalCenter: parent.verticalCenter
+      visible: preview.kind === "media"
+      spacing: 3
+      Repeater {
+        model: [8, 16, 22, 12, 18]
+        delegate: Rectangle {
+          required property int modelData
+          anchors.verticalCenter: parent.verticalCenter
+          width: 3; height: modelData; radius: 1.5
+          color: preview.accent
+        }
+      }
+    }
+  }
+}

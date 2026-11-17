@@ -1,0 +1,99 @@
+import QtQuick
+import "../../i18n" as Locale
+import "../../components"
+
+// Shown for a moment when the keyboard layout changes: the keyboard leading,
+// the layout's name in the middle, and trailing a chip for each layout with a
+// white capsule that slides from the one you left, like WorkspacePill.
+// `layout` is the KeyboardAddon.
+Item {
+  id: pill
+  required property var layout
+  readonly property var host: layout.host
+  readonly property bool shown: layout.pillShown
+  readonly property int chip: 30
+  readonly property int gap: 8
+
+  opacity: shown ? 1 : 0
+  visible: opacity > 0.01
+  Behavior on opacity { MotionAnimation { theme: pill.host.theme; pace: "fade"; curve: "fade" } }
+
+  PillReveal { id: reveal; theme: pill.host.theme; shown: pill.shown }
+
+  // Leading: the keyboard, settling gently into place.
+  Text {
+    id: leading
+    anchors.left: parent.left
+    anchors.leftMargin: 14
+    anchors.verticalCenter: parent.verticalCenter
+    text: "󰌌"
+    color: pill.host.theme.accent
+    font.family: pill.host.theme.fontFamily
+    font.pixelSize: pill.host.theme.px(20)
+    opacity: reveal.leadingIn
+    PillPart { progress: reveal.leadingIn }
+  }
+
+  // Middle: the layout's name.
+  Text {
+    opacity: reveal.middleIn
+    PillPart { progress: reveal.middleIn; scaleFrom: 0.94 }
+    anchors.left: leading.right
+    anchors.leftMargin: 10
+    anchors.right: trailing.left
+    anchors.rightMargin: 12
+    anchors.verticalCenter: parent.verticalCenter
+    text: Locale.I18n.tr(pill.layout.name)
+    textFormat: Text.PlainText
+    elide: Text.ElideRight
+    color: pill.host.theme.text
+    font.family: pill.host.theme.textFontFamily
+    font.pixelSize: pill.host.theme.size.body
+    font.weight: Font.Medium
+    font.letterSpacing: pill.host.theme.tracking(pill.host.theme.textFontFamily, pill.host.theme.size.body)
+  }
+
+  // Trailing: a chip per layout; the capsule keeps its place while hidden,
+  // so the next switch slides it from the last one.
+  Item {
+    id: trailing
+    opacity: reveal.trailingIn
+    PillPart { progress: reveal.trailingIn }
+    anchors.right: parent.right
+    anchors.rightMargin: 12
+    anchors.verticalCenter: parent.verticalCenter
+    width: pill.layout.codes.length * (pill.chip + pill.gap) - pill.gap
+    height: 22
+
+    Rectangle {
+      x: pill.layout.index * (pill.chip + pill.gap)
+      width: pill.chip
+      height: parent.height
+      radius: height / 2
+      color: "#ffffff"
+      Behavior on x { MotionAnimation { theme: pill.host.theme; pace: "expressive" } }
+    }
+
+    Row {
+      spacing: pill.gap
+      Repeater {
+        model: pill.layout.codes
+        delegate: Text {
+          required property string modelData
+          required property int index
+          width: pill.chip
+          height: trailing.height
+          horizontalAlignment: Text.AlignHCenter
+          verticalAlignment: Text.AlignVCenter
+          text: Locale.I18n.tr(modelData.toUpperCase())
+          color: index === pill.layout.index ? "#000000" : Qt.rgba(1, 1, 1, 0.45)
+          Behavior on color { MotionColorAnimation { theme: pill.host.theme } }
+          font.family: pill.host.theme.textFontFamily
+          font.letterSpacing: pill.host.theme.tracking(pill.host.theme.textFontFamily, pill.host.theme.size.subheadline)
+          font.pixelSize: pill.host.theme.size.subheadline
+          font.weight: Font.Bold
+        }
+      }
+    }
+  }
+}

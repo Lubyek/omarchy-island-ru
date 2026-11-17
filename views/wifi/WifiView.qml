@@ -1,0 +1,765 @@
+import QtQuick
+import "../../i18n" as Locale
+import QtQuick.Layouts
+import "../../components"
+import "../../services"
+import Quickshell.Io
+import Quickshell.Networking
+
+// Wi-Fi networks, opened from the Control Center's Wi-Fi tile, laid out like
+// macOS's Wi-Fi module: Known Networks (the connected one first),
+// a collapsible Other Networks, and Wi-Fi Settings. Connect, disconnect, and
+// forget go through NetworkManager; secured networks that aren't saved ask for
+// a password inline.
+// Keyboard: ↑/↓ (or Tab, j/k) to move, Enter/Space to toggle, connect or
+// disconnect, open Other Networks, or open settings; Delete/x to forget; Esc
+// to cancel a password or go back to the Control Center. A Speed Test row
+// above the footer measures download and upload with Omarchy's own helper
+// (SpeedTest) while a connection is up.
+ColumnLayout {
+  id: wf
+  required property var host
+  property bool active: false
+
+  readonly property color accent: host.theme.accent
+  readonly property color accentInk: host.theme.accentText
+  readonly property color text: host.theme.text
+  readonly property color textMuted: host.theme.secondary
+  readonly property color tile: host.theme.tile
+  readonly property color card: host.theme.card
+  readonly property color edge: host.theme.fill("quiet")
+  readonly property color well: host.theme.well
+  readonly property color wellHover: host.theme.wellHover
+  readonly property string iconFont: host.theme.fontFamily
+
+  readonly property var device: {
+    var devs = Networking.devices ? Networking.devices.values : []
+    var fallback = null
+    for (var i = 0; i < devs.length; i++) {
+      var d = devs[i]
+      if (!d || d.type !== DeviceType.Wifi) continue
+      if (d.connected) return d
+      if (!fallback) fallback = d
+    }
+    return fallback
+  }
+  readonly property bool powered: !!device && Networking.wifiEnabled
+  readonly property bool scanning: !!(device && device.scannerEnabled)
+
+  // Any live link will do (Ethernet included): the helper tests the default
+  // route, not this view's adapter.
+  readonly property bool online: {
+    var devs = Networking.devices ? Networking.devices.values : []
+    return devs.some(function(d) { return !!d && !!d.connected })
+  }
+  readonly property bool canSpeedTest: speed.available && online
+  onCanSpeedTestChanged: if (!canSpeedTest) speed.stop()
+  SpeedTest { id: speed; active: wf.active }
+  // The dials' full scale: the smallest stop that holds both readings, so
+  // they share one scale and it only grows during a run.
+  readonly property real speedScale: {
+    var top = Math.max(speed.download, speed.upload)
+    var stops = [100, 250, 500, 1000, 2500, 5000, 10000]
+    for (var i = 0; i < stops.length; i++) if (top <= stops[i] * 0.92) return stops[i]
+    return stops[stops.length - 1]
+  }
+
+  // The most the network list may take: its usual 460, less on a screen too
+  // short for that and everything around it (the island's margin and padding,
+  // the header, the card's padding and footer, the Speed Test row and dials).
+  readonly property real listRoom: {
+    var speedRoom = !canSpeedTest ? 0 : 51 + (speed.error !== "" ? 12 : 0) + (speed.running || speed.done ? 128 : 0)
+    return Window.height > 0 ? Math.min(460, Math.max(120, Window.height - 197 - speedRoom)) : 460
+  }
+
+  // Network being joined, so its connectionFailed can be reported.
+  property var attempt: null
+  property string failedName: ""
+  property string failedReason: ""
+  // Name of the network whose password field is open.
+  property string passwordFor: ""
+  // Kept here, not in the field: a row's delegate goes when it leaves the list.
+  property string passwordText: ""
+  // Show the typed password in clear; reset whenever a field opens or the view closes.
+  property bool revealPassword: false
+  onPasswordForChanged: revealPassword = false
+
+  // Rows hold plain values only, as in the Bluetooth view: networks come and
+  // go during scans. Actions look the network up again by name.
+  readonly property var rows: {
+    var nets = device && device.networks ? device.networks.values : []
+    var groups = { connected: [], known: [], nearby: [] }
+    for (var i = 0; i < nets.length; i++) {
+      var n = nets[i]
+      if (!n) continue
+      var name = String(n.name || "").trim()
+      if (!name) continue
+      var section = n.connected ? "connected" : n.known ? "known" : "nearby"
+      var pending = n.state === ConnectionState.Connecting ? "connecting"
+        : n.state === ConnectionState.Disconnecting ? "disconnecting" : ""
+      groups[section].push({
+        address: name,
+        name: name,
+        section: section,
+        connected: !!n.connected,
+        secure: n.security !== WifiSecurityType.Open && n.security !== WifiSecurityType.Owe,
+        strength: n.signalStrength,
+        pending: pending
+      })
+    }
+    var byName = function(a, b) { return a.name.localeCompare(b.name) }
+    return groups.connected.sort(byName)
+      .concat(groups.known.sort(byName))
+      .concat(groups.nearby.sort(function(a, b) { return b.strength - a.strength }))
+  }
+
+  // What the list shows: Known Networks (connected first, then saved) and
+  // Other Networks, which starts collapsed while a network is connected, as
+  // on macOS.
+  readonly property bool anyConnected: rows.some(function(r) { return !!r.connected })
+  property var otherOpenChoice: null
+  readonly property bool otherOpen: otherOpenChoice !== null ? otherOpenChoice : !anyConnected
+  readonly property var displayRows: {
+    var known = rows.filter(function(r) { return r.address && r.section !== "nearby" })
+    var other = rows.filter(function(r) { return r.address && r.section === "nearby" })
+    var out = []
+    if (known.length) out = out.concat([{ header: "Known Networks" }], known)
+    if (other.length) {
+      out.push({ header: "Other Networks", toggle: true })
+      if (otherOpen) out = out.concat(other)
+    }
+    return out
+  }
+
+  // Keyboard cursor, by name so it survives rows reordering; "other" is the
+  // Other Networks header, "settings" the footer.
+  property string selectedKey: ""
+  // The keyboard highlight appears once the keys are used, as on macOS.
+  property bool usingKeys: false
+  readonly property var navKeys: {
+    var keys = []
+    for (var i = 0; i < displayRows.length; i++) {
+      if (displayRows[i].address) keys.push(displayRows[i].address)
+      else if (displayRows[i].toggle) keys.push("other")
+    }
+    if (canSpeedTest) keys.push("speed")
+    keys.push("settings")
+    return keys
+  }
+  readonly property string cursor: navKeys.indexOf(selectedKey) !== -1 ? selectedKey : navKeys[0] || ""
+  onCursorChanged: {
+    for (var i = 0; i < displayRows.length; i++) {
+      var r = displayRows[i]
+      if (r.address === cursor || (cursor === "other" && r.toggle)) { list.positionViewAtIndex(i, ListView.Contain); return }
+    }
+  }
+  function move(delta) {
+    if (!usingKeys) { usingKeys = true; return }
+    var i = navKeys.indexOf(cursor)
+    if (i !== -1) selectedKey = navKeys[Math.max(0, Math.min(navKeys.length - 1, i + delta))]
+  }
+  function rowFor(name) {
+    for (var i = 0; i < rows.length; i++) if (rows[i].address === name) return rows[i]
+    return null
+  }
+
+  function networkFor(name) {
+    var nets = device && device.networks ? device.networks.values : []
+    for (var i = 0; i < nets.length; i++) if (nets[i] && nets[i].name === name) return nets[i]
+    return null
+  }
+  function toggleSpeedTest() { if (speed.running) speed.stop(); else speed.start() }
+  // Settings → Network.
+  function openSettings() { host.openSettings("Network") }
+  function activate(row) {
+    if (row.pending) return
+    var n = networkFor(row.address)
+    if (!n) return
+    failedName = ""
+    if (row.connected) { n.disconnect(); return }
+    if (row.section === "nearby" && row.secure) { passwordText = ""; passwordFor = row.address; return }
+    attempt = n
+    n.connect()
+  }
+  function join(name, psk) {
+    var n = networkFor(name)
+    passwordFor = ""
+    if (!n || !psk) return
+    failedName = ""
+    attempt = n
+    n.connectWithPsk(psk)
+  }
+  function forget(row) {
+    var n = networkFor(row.address)
+    if (n && !row.pending) n.forget()
+  }
+
+  Connections {
+    target: wf.attempt
+    function onConnectionFailed(reason) {
+      wf.failedName = wf.attempt.name
+      wf.failedReason = reason === ConnectionFailReason.NoSecrets || reason === ConnectionFailReason.WifiAuthTimeout
+        ? "Wrong password" : "Couldn't connect"
+    }
+  }
+
+  // Scan only while the view is open.
+  Binding {
+    when: !!wf.device
+    target: wf.device
+    property: "scannerEnabled"
+    value: wf.active && wf.powered
+    restoreMode: Binding.RestoreNone
+  }
+
+  onActiveChanged: if (active) { selectedKey = ""; passwordFor = ""; revealPassword = false; failedName = ""; otherOpenChoice = null; usingKeys = false; Qt.callLater(function() { wf.forceActiveFocus() }) }
+  Keys.onPressed: function(event) {
+    var k = event.key
+    var row = wf.rowFor(wf.cursor)
+    if (k === Qt.Key_Down || k === Qt.Key_J || (k === Qt.Key_Tab && !(event.modifiers & Qt.ShiftModifier))) wf.move(1)
+    else if (k === Qt.Key_Up || k === Qt.Key_K || k === Qt.Key_Backtab) wf.move(-1)
+    else if (!wf.usingKeys && (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space || k === Qt.Key_Delete || k === Qt.Key_X))
+      wf.usingKeys = true
+    else if (k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space) {
+      if (wf.cursor === "other") wf.otherOpenChoice = !wf.otherOpen
+      else if (wf.cursor === "speed") wf.toggleSpeedTest()
+      else if (wf.cursor === "settings") wf.openSettings()
+      else if (row) wf.activate(row)
+    } else if (k === Qt.Key_Delete || k === Qt.Key_X) {
+      if (row && row.section !== "nearby") wf.forget(row)
+    } else if (k === Qt.Key_Escape) wf.host.view = "controls"
+    else return
+    event.accepted = true
+  }
+
+  spacing: 8
+
+  // Header: back to the Control Center and the title. Wi-Fi itself turns on
+  // and off from the Control Center's tile.
+  RowLayout {
+    Layout.fillWidth: true
+    Layout.preferredHeight: 34
+    Layout.leftMargin: 4
+    Layout.rightMargin: 6
+    spacing: 8
+    Rectangle {
+      scale: backMouse.pressed ? 0.92 : 1
+      Behavior on scale { MotionAnimation { theme: wf.host.theme; pace: backMouse.pressed ? "press" : "standard" } }
+      Layout.preferredWidth: 32
+      Layout.preferredHeight: 32
+      radius: height / 2
+      color: backMouse.containsMouse ? wf.well : wf.card
+      Tooltip { theme: wf.host.theme; text: Locale.I18n.tr("Control Center") }
+      Text { anchors.centerIn: parent; text: "󰅁"; color: wf.text; font.family: wf.iconFont; font.pixelSize: wf.host.theme.px(17) }
+      MouseArea { id: backMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: wf.host.view = "controls" }
+    }
+    Text {
+      text: Locale.I18n.tr("Wi-Fi")
+      color: wf.text
+      font.family: wf.host.theme.textFontFamily
+      font.letterSpacing: wf.host.theme.tracking(wf.host.theme.textFontFamily, wf.host.theme.size.title2)
+      font.pixelSize: wf.host.theme.size.title2
+      font.weight: Font.DemiBold
+    }
+    Item { Layout.fillWidth: true }
+  }
+
+  Rectangle {
+    Layout.fillWidth: true
+    Layout.preferredHeight: body.implicitHeight + 12
+    radius: wf.host.theme.radii.card
+    color: wf.card
+    border.width: 1
+    border.color: wf.edge
+
+    ColumnLayout {
+      id: body
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.top: parent.top
+      anchors.margins: 6
+      spacing: 0
+
+      EmptyState {
+        visible: !wf.displayRows.length
+        Layout.fillWidth: true
+        host: wf.host
+        glyph: !wf.device || !wf.powered ? "󰖪" : "󰤨"
+        text: Locale.I18n.tr(!wf.device ? "No Wi-Fi adapter" : !wf.powered ? "Wi-Fi is off" : "Looking for networks…")
+      }
+
+      ListView {
+        id: list
+        OverlayScrollbar { flickable: list; parent: list; theme: wf.host.theme }
+        visible: wf.displayRows.length > 0
+        Layout.fillWidth: true
+        // Grows and shrinks with the rows as they fade in and out, instead
+        // of jumping to the new content height. Off until the list has been
+        // showing for a moment, so opening the view or its first rows don't
+        // grow it from nothing.
+        property bool heightSettled: false
+        readonly property bool settleWanted: wf.active && wf.displayRows.length > 0
+        onSettleWantedChanged: {
+          heightSettled = false
+          if (settleWanted) heightSettleTimer.restart()
+        }
+        Timer {
+          id: heightSettleTimer
+          interval: wf.host.theme.motionDuration("morph")
+          onTriggered: list.heightSettled = list.settleWanted
+        }
+        property real frameHeight: Math.min(contentHeight, wf.listRoom)
+        Behavior on frameHeight { enabled: list.heightSettled; MotionAnimation { theme: wf.host.theme; pace: "standard" } }
+        Layout.preferredHeight: frameHeight
+        clip: true
+        interactive: contentHeight > height
+        boundsBehavior: Flickable.StopAtBounds
+        model: rowModel.model
+        // Kept by key, so a scan or opening Other Networks fades rows in
+        // and out and slides the rest, instead of rebuilding the list; the
+        // first fill just appears.
+        KeyedListModel {
+          id: rowModel
+          values: wf.displayRows
+          keyOf: function(r) { return r.header !== undefined ? "header:" + r.header : r.address }
+        }
+        add: Transition {
+          enabled: rowModel.primed && wf.active
+          MotionAnimation { theme: wf.host.theme; property: "opacity"; from: 0; to: 1; pace: "fade"; curve: "fade" }
+        }
+        remove: Transition {
+          enabled: wf.active
+          MotionAnimation { theme: wf.host.theme; property: "opacity"; to: 0; pace: "exit"; curve: "exit" }
+        }
+        move: Transition {
+          enabled: wf.active
+          MotionAnimation { theme: wf.host.theme; property: "y"; pace: "standard" }
+        }
+        // Also settles opacity, in case a row was still fading in.
+        displaced: Transition {
+          enabled: wf.active
+          MotionAnimation { theme: wf.host.theme; property: "y"; pace: "standard" }
+          MotionAnimation { theme: wf.host.theme; property: "opacity"; to: 1; pace: "fade"; curve: "fade" }
+        }
+        delegate: Item {
+          id: row
+          required property var entry
+          required property int index
+          readonly property var modelData: entry
+          readonly property bool isHeader: modelData.header !== undefined
+          readonly property bool isSelected: wf.usingKeys && (isHeader ? (!!modelData.toggle && wf.cursor === "other") : modelData.address === wf.cursor)
+          readonly property bool askingPassword: !isHeader && modelData.address === wf.passwordFor
+          width: ListView.view.width
+          height: isHeader ? 38 : 48
+
+          // Section header; Other Networks opens and closes, with a spinner
+          // while Wi-Fi scans.
+          Rectangle {
+            visible: row.isHeader
+            anchors.fill: parent
+            // index is -1 while a removed header fades out; it keeps its gap.
+            anchors.topMargin: row.index !== 0 ? 4 : 0
+            radius: 8
+            color: row.modelData.toggle && (headerMouse.containsMouse || row.isSelected) ? wf.tile : "transparent"
+            Behavior on color { MotionColorAnimation { theme: wf.host.theme } }
+            Rectangle {
+              visible: row.index !== 0
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.leftMargin: 10
+              anchors.rightMargin: 10
+              anchors.bottom: parent.top
+              anchors.bottomMargin: 2
+              height: 1
+              color: wf.host.theme.fill("subtle")
+            }
+            Text {
+              anchors.left: parent.left
+              anchors.leftMargin: 10
+              anchors.verticalCenter: parent.verticalCenter
+              text: Locale.I18n.tr(row.modelData.header || "")
+              color: wf.textMuted
+              font.family: wf.host.theme.textFontFamily
+              font.letterSpacing: wf.host.theme.tracking(wf.host.theme.textFontFamily, wf.host.theme.size.body)
+              font.pixelSize: wf.host.theme.size.body
+              font.weight: Font.DemiBold
+            }
+            Row {
+              anchors.right: parent.right
+              anchors.rightMargin: 10
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: 8
+              visible: !!row.modelData.toggle
+              Text {
+                id: spinner
+                anchors.verticalCenter: parent.verticalCenter
+                visible: wf.scanning
+                text: "󰑓"
+                color: wf.textMuted
+                font.family: wf.iconFont
+                font.pixelSize: wf.host.theme.px(14)
+                AmbientRotation {
+                  target: spinner
+                  period: 1200
+                  running: spinner.visible && wf.active
+                }
+              }
+              Chevron {
+                anchors.verticalCenter: parent.verticalCenter
+                theme: wf.host.theme
+                open: wf.otherOpen
+                color: wf.textMuted
+                pixelSize: wf.host.theme.px(17)
+              }
+            }
+            MouseArea {
+              id: headerMouse
+              anchors.fill: parent
+              enabled: !!row.modelData.toggle
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: wf.otherOpenChoice = !wf.otherOpen
+            }
+          }
+
+          // A network: round signal icon (accent when connected), the name,
+          // and a lock for secured ones.
+          Rectangle {
+            visible: !row.isHeader
+            anchors.fill: parent
+            radius: 8
+            color: rowMouse.pressed ? wf.well : rowMouse.containsMouse || forgetMouse.containsMouse || row.isSelected || row.askingPassword ? wf.tile : "transparent"
+            Behavior on color { MotionColorAnimation { theme: wf.host.theme } }
+
+            Rectangle {
+              id: badge
+              anchors.left: parent.left
+              anchors.leftMargin: 8
+              anchors.verticalCenter: parent.verticalCenter
+              width: 34; height: 34; radius: 17
+              color: row.modelData.connected ? wf.accent : wf.well
+              // The same glyph as the Control Center's Wi-Fi tile.
+              Text {
+                anchors.centerIn: parent
+                text: Locale.I18n.tr("\uf1eb")
+                color: row.modelData.connected ? wf.accentInk : wf.text
+                font.family: wf.iconFont
+                font.pixelSize: wf.host.theme.px(18)
+              }
+            }
+            Column {
+              visible: !row.askingPassword
+              anchors.left: badge.right
+              anchors.leftMargin: 10
+              anchors.right: trailing.left
+              anchors.rightMargin: 8
+              anchors.verticalCenter: parent.verticalCenter
+              Text {
+                width: parent.width
+                text: row.modelData.name || ""
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                color: wf.text
+                font.family: wf.host.theme.textFontFamily
+                font.letterSpacing: wf.host.theme.tracking(wf.host.theme.textFontFamily, wf.host.theme.size.title3)
+                font.pixelSize: wf.host.theme.size.title3
+              }
+              Text {
+                width: parent.width
+                readonly property string status: row.modelData.pending === "connecting" ? "Connecting…"
+                  : row.modelData.pending === "disconnecting" ? "Disconnecting…"
+                  : row.modelData.name === wf.failedName ? wf.failedReason
+                  : ""
+                visible: status !== ""
+                text: Locale.I18n.tr(status)
+                color: wf.textMuted
+                font.family: wf.host.theme.textFontFamily
+                font.letterSpacing: wf.host.theme.tracking(wf.host.theme.textFontFamily, wf.host.theme.size.callout)
+                font.pixelSize: wf.host.theme.size.callout
+              }
+            }
+            MouseArea {
+              id: rowMouse
+              anchors.fill: parent
+              enabled: !row.askingPassword
+              hoverEnabled: true
+              cursorShape: row.modelData.pending ? Qt.BusyCursor : Qt.PointingHandCursor
+              onClicked: wf.activate(row.modelData)
+            }
+            // Password for joining a secured network: a macOS-style field.
+            // Enter joins, Esc cancels.
+            Rectangle {
+              visible: row.askingPassword
+              anchors.left: badge.right
+              anchors.leftMargin: 10
+              anchors.right: parent.right
+              anchors.rightMargin: 8
+              anchors.verticalCenter: parent.verticalCenter
+              height: 32
+              radius: wf.host.theme.radii.medium
+              color: wf.well
+              border.width: 2
+              border.color: wf.host.theme.accentFill("ring")
+              TextInput {
+                id: password
+                anchors.left: parent.left
+                anchors.leftMargin: 8
+                anchors.right: reveal.left
+                anchors.rightMargin: 4
+                anchors.verticalCenter: parent.verticalCenter
+                echoMode: wf.revealPassword ? TextInput.Normal : TextInput.Password
+                color: wf.text
+                selectionColor: wf.host.theme.accentFill("ring")
+                selectedTextColor: wf.text
+                font.family: wf.host.theme.textFontFamily
+                font.letterSpacing: wf.host.theme.tracking(wf.host.theme.textFontFamily, wf.host.theme.size.title3)
+                font.pixelSize: wf.host.theme.size.title3
+                clip: true
+                function sync() { if (row.askingPassword) { text = wf.passwordText; forceActiveFocus() } }
+                Component.onCompleted: sync()
+                onVisibleChanged: sync()
+                onTextChanged: if (row.askingPassword) wf.passwordText = text
+                Keys.onPressed: function(event) {
+                  if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) wf.join(row.modelData.address, text)
+                  else if (event.key === Qt.Key_Escape) wf.passwordFor = ""
+                  else return
+                  event.accepted = true
+                  wf.forceActiveFocus()
+                }
+                Text {
+                  anchors.fill: parent
+                  verticalAlignment: Text.AlignVCenter
+                  visible: password.text === ""
+                  text: "Password for " + (row.modelData.name || "")
+                  color: wf.textMuted
+                  font: password.font
+                }
+              }
+              // Eye toggle. Hands focus back to the field so Enter/Esc keep working.
+              Rectangle {
+                id: reveal
+                anchors.right: parent.right
+                anchors.rightMargin: 4
+                anchors.verticalCenter: parent.verticalCenter
+                width: 24; height: 24; radius: 12
+                color: revealMouse.containsMouse ? wf.wellHover : "transparent"
+                Tooltip { theme: wf.host.theme; text: Locale.I18n.tr(wf.revealPassword ? "Hide Password" : "Show Password") }
+                Text {
+                  anchors.centerIn: parent
+                  text: Locale.I18n.tr(wf.revealPassword ? "󰈉" : "󰈈")
+                  color: revealMouse.containsMouse ? wf.text : wf.textMuted
+                  font.family: wf.iconFont
+                  font.pixelSize: wf.host.theme.px(15)
+                }
+                MouseArea {
+                  id: revealMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: { wf.revealPassword = !wf.revealPassword; password.forceActiveFocus() }
+                }
+              }
+            }
+            // Trailing: forget (saved networks, on hover) and the lock.
+            Row {
+              id: trailing
+              visible: !row.askingPassword
+              anchors.right: parent.right
+              anchors.rightMargin: 10
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: 6
+              Rectangle {
+                id: forgetButton
+                scale: forgetMouse.pressed ? 0.9 : 1
+                Behavior on scale { MotionAnimation { theme: wf.host.theme; pace: forgetMouse.pressed ? "press" : "standard" } }
+                // Fades in on hover and out quicker, and takes no clicks
+                // while it fades out.
+                readonly property bool shown: row.modelData.section !== "nearby" && !row.modelData.pending
+                  && (rowMouse.containsMouse || forgetMouse.containsMouse || row.isSelected)
+                opacity: shown ? 1 : 0
+                visible: opacity > 0.01
+                Behavior on opacity { MotionAnimation { theme: wf.host.theme; pace: forgetButton.shown ? "fade" : "exit"; curve: forgetButton.shown ? "fade" : "exit" } }
+                anchors.verticalCenter: parent.verticalCenter
+                width: 26; height: 26; radius: 13
+                color: forgetMouse.containsMouse ? wf.wellHover : "transparent"
+                Tooltip { theme: wf.host.theme; text: Locale.I18n.tr("Forget This Network") }
+                Text {
+                  anchors.centerIn: parent
+                  text: "󰅖"
+                  color: forgetMouse.containsMouse ? wf.text : wf.textMuted
+                  font.family: wf.iconFont
+                  font.pixelSize: wf.host.theme.px(15)
+                }
+                MouseArea {
+                  id: forgetMouse
+                  anchors.fill: parent
+                  enabled: forgetButton.shown
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: wf.forget(row.modelData)
+                }
+              }
+              Text {
+                visible: !!row.modelData.secure
+                anchors.verticalCenter: parent.verticalCenter
+                text: "󰌾"
+                color: wf.textMuted
+                font.family: wf.iconFont
+                font.pixelSize: wf.host.theme.px(15)
+              }
+            }
+          }
+        }
+      }
+
+      // Speed Test: a row that starts and cancels the test, and under it the
+      // download and upload dials while it runs and once it is done.
+      ColumnLayout {
+        visible: wf.canSpeedTest
+        Layout.fillWidth: true
+        spacing: 0
+        Rectangle {
+          Layout.fillWidth: true
+          Layout.leftMargin: 10
+          Layout.rightMargin: 10
+          Layout.topMargin: 4
+          Layout.bottomMargin: 4
+          Layout.preferredHeight: 1
+          color: wf.host.theme.fill("subtle")
+        }
+        Rectangle {
+          Layout.fillWidth: true
+          Layout.preferredHeight: speed.error !== "" ? 54 : 42
+          radius: 8
+          color: speedMouse.pressed ? wf.well : speedMouse.containsMouse || (wf.usingKeys && wf.cursor === "speed") ? wf.tile : "transparent"
+          Behavior on color { MotionColorAnimation { theme: wf.host.theme } }
+          Column {
+            anchors.left: parent.left
+            anchors.leftMargin: 10
+            anchors.right: speedAction.left
+            anchors.rightMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            Text {
+              width: parent.width
+              text: Locale.I18n.tr(speed.phase === "down" ? "Measuring download…" : speed.phase === "up" ? "Measuring upload…" : "Speed Test")
+              elide: Text.ElideRight
+              color: wf.text
+              font.family: wf.host.theme.textFontFamily
+              font.letterSpacing: wf.host.theme.tracking(wf.host.theme.textFontFamily, wf.host.theme.size.title3)
+              font.pixelSize: wf.host.theme.size.title3
+            }
+            Text {
+              width: parent.width
+              visible: speed.error !== ""
+              text: Locale.I18n.tr(speed.error)
+              textFormat: Text.PlainText
+              elide: Text.ElideRight
+              color: wf.host.theme.urgent
+              font.family: wf.host.theme.textFontFamily
+              font.letterSpacing: wf.host.theme.tracking(wf.host.theme.textFontFamily, wf.host.theme.size.callout)
+              font.pixelSize: wf.host.theme.size.callout
+            }
+          }
+          Text {
+            id: speedAction
+            anchors.right: parent.right
+            anchors.rightMargin: 10
+            anchors.verticalCenter: parent.verticalCenter
+            text: Locale.I18n.tr(speed.running ? "Cancel" : speed.done || speed.error !== "" ? "Run Again" : "Start")
+            color: wf.textMuted
+            font.family: wf.host.theme.textFontFamily
+            font.letterSpacing: wf.host.theme.tracking(wf.host.theme.textFontFamily, wf.host.theme.size.body)
+            font.pixelSize: wf.host.theme.size.body
+          }
+          MouseArea {
+            id: speedMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: wf.toggleSpeedTest()
+          }
+        }
+        Item {
+          id: speedDials
+          readonly property bool shown: speed.running || speed.done
+          Layout.fillWidth: true
+          Layout.preferredHeight: shown ? 128 : 0
+          Behavior on Layout.preferredHeight { MotionAnimation { theme: wf.host.theme; pace: "standard" } }
+          opacity: shown ? 1 : 0
+          Behavior on opacity { MotionAnimation { theme: wf.host.theme; pace: speedDials.shown ? "fade" : "exit"; curve: speedDials.shown ? "fade" : "exit" } }
+          clip: true
+          Row {
+            anchors.centerIn: parent
+            spacing: 56
+            Repeater {
+              model: [
+                { label: "Download", mbps: speed.download, live: speed.phase === "down" },
+                { label: "Upload", mbps: speed.upload, live: speed.phase === "up" }
+              ]
+              delegate: Column {
+                id: dial
+                required property var modelData
+                spacing: 4
+                // The dial that has no figure yet waits dimmed.
+                opacity: modelData.live || modelData.mbps > 0 ? 1 : 0.5
+                Behavior on opacity { MotionAnimation { theme: wf.host.theme; pace: "fade"; curve: "fade" } }
+                Ring {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  view: wf
+                  width: 88
+                  height: 88
+                  color: wf.accent
+                  value: Math.min(100, dial.modelData.mbps / wf.speedScale * 100)
+                  text: Locale.I18n.tr(dial.modelData.mbps <= 0 ? "–" : dial.modelData.mbps < 10 ? dial.modelData.mbps.toFixed(1) : String(Math.round(dial.modelData.mbps)))
+                  caption: "Mbps"
+                }
+                Text {
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: Locale.I18n.tr(dial.modelData.label)
+                  color: wf.textMuted
+                  font.family: wf.host.theme.textFontFamily
+                  font.letterSpacing: wf.host.theme.tracking(wf.host.theme.textFontFamily, wf.host.theme.size.callout)
+                  font.pixelSize: wf.host.theme.size.callout
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Footer: Wi-Fi Settings, below a hairline, as on macOS.
+      Rectangle {
+        Layout.fillWidth: true
+        Layout.leftMargin: 10
+        Layout.rightMargin: 10
+        Layout.topMargin: 4
+        Layout.bottomMargin: 4
+        Layout.preferredHeight: 1
+        color: wf.host.theme.fill("subtle")
+      }
+      Rectangle {
+        Layout.fillWidth: true
+        Layout.preferredHeight: 42
+        radius: 8
+        color: settingsMouse.pressed ? wf.well : settingsMouse.containsMouse || (wf.usingKeys && wf.cursor === "settings") ? wf.tile : "transparent"
+        Text {
+          anchors.left: parent.left
+          anchors.leftMargin: 10
+          anchors.verticalCenter: parent.verticalCenter
+          text: Locale.I18n.tr("Wi-Fi Settings…")
+          color: wf.text
+          font.family: wf.host.theme.textFontFamily
+          font.letterSpacing: wf.host.theme.tracking(wf.host.theme.textFontFamily, wf.host.theme.size.title3)
+          font.pixelSize: wf.host.theme.size.title3
+        }
+        MouseArea {
+          id: settingsMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: wf.openSettings()
+        }
+      }
+    }
+  }
+}

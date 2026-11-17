@@ -1,0 +1,252 @@
+import QtQuick
+import "../../i18n" as Locale
+import QtQuick.Layouts
+import "../../components"
+
+// The weather view: the place, condition, and temperature, then
+// the next hours (see below). Without a city (and no detected place), or
+// one Open-Meteo doesn't know, a hint and a button to Settings → Addons.
+// Esc closes.
+Item {
+  id: view
+  required property var weather
+  property bool active: false
+  // In a control center zone: it doesn't take the keyboard, which stays with
+  // the control center (Esc closes that).
+  property bool inZone: false
+  readonly property var host: weather.host
+  readonly property var theme: host.theme
+  readonly property var now: weather.current
+  readonly property bool showing: !!now
+  readonly property color textMuted: theme.secondary
+
+  // The icon glyph's side bearing and the text's line spacing leave room
+  // the padding doesn't see; pulling them in keeps the card's visible
+  // margins even on every side.
+  readonly property int opticalLeft: 9
+  readonly property int opticalTop: 7
+  readonly property int opticalBottom: 2
+  // Extra room above and below, on top of the even margins.
+  readonly property int roomY: 5
+  implicitHeight: showing ? reading.implicitHeight - opticalTop - opticalBottom + 2 * roomY : notice.implicitHeight
+
+  onActiveChanged: {
+    if (!active) return
+    weather.viewOpened()
+    if (!inZone) Qt.callLater(function() { view.forceActiveFocus() })
+  }
+  Keys.onEscapePressed: host.view = "rest"
+
+  function degrees(value) { return Math.round(value) + "°" }
+  // 17 → "17:00", or "5PM" without the 24-hour clock; a bare "17" read like
+  // the temperature under it.
+  function hourText(hour) {
+    if (host.settings.clock24h) return (hour < 10 ? "0" : "") + hour + ":00"
+    return ((hour + 11) % 12 + 1) + (hour < 12 ? "AM" : "PM")
+  }
+  // A chance of rain under this (%) isn't shown.
+  readonly property int rainShown: 20
+
+  // White text, Apple style, whatever the theme's text colour.
+  readonly property color ink: "#ffffff"
+  readonly property color inkMuted: Qt.rgba(1, 1, 1, 0.6)
+
+  // The condition's icon close beside the place and condition, and the
+  // temperature on their baseline; then now and the next hours, each with
+  // its temperature and, when rain is likely, its chance in blue.
+  Column {
+    id: reading
+    visible: view.showing
+    y: view.roomY - view.opticalTop
+    anchors.left: parent.left
+    anchors.right: parent.right
+    spacing: 16
+
+    Item {
+      id: header
+      width: parent.width
+      height: Math.max(headerIcon.height, place.height)
+
+      WeatherIcon {
+        id: headerIcon
+        x: -view.opticalLeft
+        anchors.verticalCenter: parent.verticalCenter
+        size: 54
+        fontFamily: view.theme.fontFamily
+        code: view.now ? view.now.code : 0
+        day: view.now ? view.now.day : true
+      }
+      Column {
+        id: place
+        anchors.left: headerIcon.right
+        anchors.leftMargin: 14
+        anchors.right: temperature.left
+        anchors.rightMargin: 12
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: 1
+        Text {
+          width: parent.width
+          text: Locale.I18n.tr(view.weather.place)
+          elide: Text.ElideRight
+          color: view.ink
+          font.family: view.theme.textFontFamily
+          font.features: { "tnum": 1 }
+          font.pixelSize: view.theme.size.title1
+          font.weight: Font.Medium
+          font.letterSpacing: view.theme.tracking(view.theme.textFontFamily, view.theme.size.title1)
+        }
+        Text {
+          id: condition
+          width: parent.width
+          text: Locale.I18n.tr(view.now ? view.weather.describe(view.now.code) : "")
+          elide: Text.ElideRight
+          color: view.inkMuted
+          font.family: view.theme.textFontFamily
+          font.letterSpacing: view.theme.tracking(view.theme.textFontFamily, view.theme.size.title3)
+          font.features: { "tnum": 1 }
+          font.pixelSize: view.theme.size.title3
+          font.weight: Font.Normal
+        }
+      }
+      Text {
+        id: temperature
+        anchors.right: parent.right
+        // On the condition's baseline, the bottom of the place block.
+        y: place.y + condition.y + condition.baselineOffset - baselineOffset
+        text: Locale.I18n.tr(view.now ? view.degrees(view.now.temperature) : "")
+        color: view.ink
+        font.family: view.theme.textFontFamily
+        font.features: { "tnum": 1 }
+        font.pixelSize: view.theme.px(46)
+        font.weight: Font.Light
+        font.letterSpacing: view.theme.tracking(view.theme.textFontFamily, view.theme.px(46))
+      }
+    }
+
+    // Equal columns, each centred on its own number (the ° hangs off it).
+    Row {
+      id: hourRow
+      readonly property var columns: view.now
+        ? [{ now: true, code: view.now.code, day: view.now.day, rain: 0, temperature: view.now.temperature }].concat(view.weather.hours)
+        : []
+      width: parent.width
+      Repeater {
+        model: hourRow.columns
+        delegate: Column {
+          required property var modelData
+          width: hourRow.width / hourRow.columns.length
+          spacing: 4
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: Locale.I18n.tr(modelData.now ? "Now" : view.hourText(modelData.hour))
+            color: view.inkMuted
+            font.family: view.theme.textFontFamily
+            font.letterSpacing: view.theme.tracking(view.theme.textFontFamily, view.theme.size.body)
+            font.features: { "tnum": 1 }
+            font.pixelSize: view.theme.size.body
+            font.weight: Font.Medium
+          }
+          // The icon, and the chance of rain under it, share one height so
+          // the temperatures line up.
+          Item {
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: 26
+            height: 38
+            WeatherIcon {
+              anchors.horizontalCenter: parent.horizontalCenter
+              y: modelData.rain >= view.rainShown ? 0 : 6
+              size: 26
+              fontFamily: view.theme.fontFamily
+              code: modelData.code
+              day: modelData.day
+            }
+            Text {
+              visible: modelData.rain >= view.rainShown
+              anchors.horizontalCenter: parent.horizontalCenter
+              anchors.bottom: parent.bottom
+              text: Locale.I18n.tr(modelData.rain + "%")
+              color: "#5ac8fa"
+              font.family: view.theme.textFontFamily
+              font.letterSpacing: view.theme.tracking(view.theme.textFontFamily, view.theme.size.footnote)
+              font.features: { "tnum": 1 }
+              font.pixelSize: view.theme.size.footnote
+              font.weight: Font.Bold
+            }
+          }
+          Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            text: Locale.I18n.tr(Math.round(modelData.temperature))
+            color: view.ink
+            font.family: view.theme.textFontFamily
+            font.letterSpacing: view.theme.tracking(view.theme.textFontFamily, view.theme.size.title3)
+            font.features: { "tnum": 1 }
+            font.pixelSize: view.theme.size.title3
+            font.weight: Font.Medium
+            Text {
+              anchors.left: parent.right
+              text: "°"
+              color: parent.color
+              font: parent.font
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Loading, or why there's nothing to show.
+  ColumnLayout {
+    id: notice
+    visible: !view.showing
+    anchors.left: parent.left
+    anchors.right: parent.right
+    spacing: 12
+    readonly property string status: view.weather.status
+    readonly property bool needsCity: status === "missing" || status === "unknown"
+
+    Text {
+      Layout.fillWidth: true
+      horizontalAlignment: Text.AlignHCenter
+      wrapMode: Text.WordWrap
+      text: Locale.I18n.tr(notice.status === "loading" ? "Loading weather…"
+        : notice.status === "missing" ? "Set a city, or turn on Detect my location, in Settings → Addons"
+        : notice.status === "unknown" ? "Couldn't find “" + view.weather.city + "”"
+        : !view.weather.located && view.weather.detecting ? "Couldn't detect your location"
+        : "Couldn't reach Open-Meteo")
+      color: notice.status === "loading" ? view.textMuted : view.theme.text
+      font.family: view.theme.textFontFamily
+      font.letterSpacing: view.theme.tracking(view.theme.textFontFamily, view.theme.size.title3)
+      font.features: { "tnum": 1 }
+      font.pixelSize: view.theme.size.title3
+    }
+    Rectangle {
+      visible: notice.status !== "loading"
+      Layout.alignment: Qt.AlignHCenter
+      implicitWidth: buttonText.implicitWidth + 32
+      implicitHeight: 32
+      radius: height / 2
+      color: buttonMouse.containsMouse ? Qt.lighter(view.theme.accent, 1.1) : view.theme.accent
+      Behavior on color { MotionColorAnimation { theme: view.theme } }
+      scale: buttonMouse.pressed ? 0.97 : 1
+      Behavior on scale { MotionAnimation { theme: view.theme; pace: buttonMouse.pressed ? "press" : "standard" } }
+      Text {
+        id: buttonText
+        anchors.centerIn: parent
+        text: Locale.I18n.tr(notice.needsCity ? "Open Settings" : "Try Again")
+        color: view.theme.accentText
+        font.family: view.theme.textFontFamily
+        font.letterSpacing: view.theme.tracking(view.theme.textFontFamily, view.theme.size.body)
+        font.features: { "tnum": 1 }
+        font.pixelSize: view.theme.size.body
+        font.weight: Font.Medium
+      }
+      MouseArea {
+        id: buttonMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: notice.needsCity ? view.host.openSettings("Addons", view.weather.addon.id) : view.weather.retry()
+      }
+    }
+  }
+}

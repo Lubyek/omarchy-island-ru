@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "huesos.island",
+  "name": "Island RU",
+  "version": "0.2.0",
+  "author": "huesos",
+  "description": "Island fork with Russian UI, bilingual search, fullscreen hide animations, and real CAVA audio bars",
+  "kinds": [
+    "bar"
+  ],
+  "entryPoints": {
+    "bar": "Island.qml"
+  }
+}

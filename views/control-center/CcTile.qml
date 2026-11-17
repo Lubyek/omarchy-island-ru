@@ -1,0 +1,106 @@
+import QtQuick
+import "../../i18n" as Locale
+import "../../components"
+import QtQuick.Layouts
+
+// A control tile, as macOS's: a rounded card (the same corners as the wide
+// cards) with a round badge for the icon at its start, and the title over a
+// status.
+// `center` is the ControlCenter, for its colours.
+Rectangle {
+  id: t
+  required property var center
+  property string icon: ""
+  // The icon's font, when it isn't the island's (a plugin's own).
+  property string iconFamily: ""
+  property string title: ""
+  property string subtitle: ""
+  property bool checked: false
+  property bool available: true
+  // When unset the tile only reports (Ethernet), and doesn't respond.
+  property bool clickable: true
+  // When set, the badge toggles and the rest of the tile opens details.
+  property bool opens: false
+  // The round icon badge's size; addon tiles that draw their own badge
+  // (Calendar) line up with it.
+  readonly property real badgeSize: 38
+  signal clicked()
+  signal opened()
+
+  Layout.fillWidth: true
+  Layout.preferredWidth: 1
+  Layout.preferredHeight: center.tileHeight
+  radius: center.cardRadius
+  color: tileMouse.containsMouse ? center.tile : center.card
+  border.width: 1
+  border.color: center.edge
+  Behavior on color { MotionColorAnimation { theme: center.host.theme } }
+  opacity: available ? 1 : 0.5
+  Behavior on opacity { MotionAnimation { theme: center.host.theme; pace: "fade"; curve: "fade" } }
+  scale: tileMouse.pressed || badgeMouse.pressed ? 0.97 : 1
+  Behavior on scale { MotionAnimation { theme: center.host.theme; pace: tileMouse.pressed || badgeMouse.pressed ? "press" : "standard" } }
+
+  Rectangle {
+    id: badge
+    anchors.left: parent.left
+    anchors.leftMargin: (t.height - height) / 2
+    anchors.verticalCenter: parent.verticalCenter
+    width: t.badgeSize; height: t.badgeSize; radius: t.badgeSize / 2
+    color: t.checked ? center.accent : center.well
+    Behavior on color { MotionColorAnimation { theme: center.host.theme } }
+    Text {
+      anchors.centerIn: parent
+      text: Locale.I18n.tr(t.icon)
+      color: t.checked ? center.badgeOnInk : center.text
+      Behavior on color { MotionColorAnimation { theme: center.host.theme } }
+      font.family: t.iconFamily || center.iconFont
+      font.pixelSize: center.host.theme.px(18)
+    }
+  }
+  Column {
+    anchors.left: badge.right
+    anchors.leftMargin: 9
+    anchors.right: parent.right
+    anchors.rightMargin: 16
+    anchors.verticalCenter: parent.verticalCenter
+    spacing: 1
+    Text {
+      width: parent.width
+      text: Locale.I18n.tr(t.title)
+      elide: Text.ElideRight
+      color: center.text
+      font.family: center.host.theme.textFontFamily
+      font.pixelSize: center.host.theme.size.body
+      font.weight: Font.DemiBold
+      font.letterSpacing: center.host.theme.tracking(center.host.theme.textFontFamily, center.host.theme.size.body)
+    }
+    Text {
+      width: parent.width
+      visible: t.subtitle !== ""
+      text: Locale.I18n.tr(t.subtitle)
+      textFormat: Text.PlainText
+      elide: Text.ElideRight
+      color: center.textMuted
+      font.family: center.host.theme.textFontFamily
+      font.letterSpacing: center.host.theme.tracking(center.host.theme.textFontFamily, center.host.theme.size.subheadline)
+      font.features: { "tnum": 1 }
+      font.pixelSize: center.host.theme.size.subheadline
+    }
+  }
+  MouseArea {
+    id: tileMouse
+    anchors.fill: parent
+    enabled: t.available && t.clickable
+    hoverEnabled: true
+    cursorShape: Qt.PointingHandCursor
+    onClicked: t.opens ? t.opened() : t.clicked()
+  }
+  MouseArea {
+    id: badgeMouse
+    visible: t.opens
+    anchors.fill: badge
+    enabled: t.available
+    cursorShape: Qt.PointingHandCursor
+    onClicked: t.clicked()
+  }
+}

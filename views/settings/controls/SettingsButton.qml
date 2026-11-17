@@ -1,0 +1,38 @@
+import QtQuick
+import "../../../i18n" as Locale
+import "../../../components"
+import QtQuick.Layouts
+
+// macOS push button: small rounded rectangle, accent for the default action.
+// `view` is the SettingsView, for its colours.
+Rectangle {
+  id: button
+  required property var view
+  property string label: ""
+  property bool primary: false
+  signal clicked()
+  implicitWidth: buttonText.implicitWidth + 24
+  implicitHeight: 28
+  radius: 6
+  color: primary ? button.view.accent : buttonMouse.containsMouse ? button.view.wellHover : button.view.well
+  Behavior on color { MotionColorAnimation { theme: button.view.host.theme } }
+  scale: buttonMouse.pressed ? 0.97 : 1
+  Behavior on scale { MotionAnimation { theme: button.view.host.theme; pace: buttonMouse.pressed ? "press" : "standard" } }
+  Text {
+    id: buttonText
+    anchors.centerIn: parent
+    text: Locale.I18n.tr(button.label)
+    color: button.primary ? button.view.accentInk : button.view.text
+    font.family: button.view.host.theme.textFontFamily
+    font.letterSpacing: button.view.host.theme.tracking(button.view.host.theme.textFontFamily, button.view.detailFontSize)
+    font.pixelSize: button.view.detailFontSize
+    font.weight: button.primary ? Font.DemiBold : Font.Normal
+  }
+  MouseArea {
+    id: buttonMouse
+    anchors.fill: parent
+    hoverEnabled: true
+    cursorShape: Qt.PointingHandCursor
+    onClicked: button.clicked()
+  }
+}
