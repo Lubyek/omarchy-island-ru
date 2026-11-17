@@ -28,6 +28,7 @@ Item {
   readonly property bool needsSetup: status !== "" && status !== "ok"
   readonly property string warning: installing ? "Setting up…"
     : status === "menu-invalid" ? "Fix omarchy-menu.jsonc"
+    : status === "legacy" ? "Replace Previous Island"
     : failure !== "" ? "Setup failed · Click for details" : "Click to Setup"
   // A failed setup's reason, for the island to show as a banner; clicking the
   // banner runs setup again.

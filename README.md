@@ -39,6 +39,27 @@ omarchy bar use huesos.island
 
 Если островок предлагает первоначальную настройку, нажмите его. Companion-настройка добавляет свои горячие клавиши и службу уведомлений с резервными копиями изменяемых конфигураций; выполняется только после нажатия.
 
+## Замена прежнего Island
+
+Если установлен `guilhermerisu.island`, после установки Island RU нажмите на островок **«Заменить прежний Island»**. Настройка:
+
+- уберёт старые `guilhermerisu.island` и `guilhermerisu.notifications` из установленных плагинов;
+- перенаправит пункты меню и горячие клавиши на `huesos.island`;
+- сохранит прежние папки целиком, включая локальные изменения, в `~/.local/state/omarchy/backups/replace-island-*` (или соответствующей папке `XDG_STATE_HOME`);
+- скопирует старые настройки и сочетания клавиш, если файлов новой версии ещё нет. Уже настроенная версия RU не перезаписывается. Прежний `island.json` также остаётся на месте.
+
+Запустить ту же настройку вручную можно так:
+
+```sh
+bash ~/.config/omarchy/plugins/huesos.island/companion/install.sh
+```
+
+Если версия RU уже установлена, сначала обновите её:
+
+```sh
+omarchy plugin update huesos.island
+```
+
 Язык: **Настройки Island → Основные → Язык**.
 
 Собственные настройки этого форка хранятся в `~/.config/omarchy/huesos-island.json`. Личные настройки автора в репозиторий не включены.
@@ -79,6 +100,7 @@ bash ~/.config/omarchy/plugins/huesos.island/companion/uninstall.sh
 omarchy plugin validate .
 omarchy plugin validate companion/huesos.notifications
 bash -n companion/check.sh companion/install.sh companion/uninstall.sh companion/bindings.sh
+python3 -m unittest discover -s tests -v
 ```
 
 См. [PUBLISH.md](PUBLISH.md) для обновления репозитория и подачи в каталог. Добавление в каталог Omarchy необязательно для установки по ссылке.

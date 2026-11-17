@@ -59,6 +59,11 @@ if [[ ! -d $target_dir ]] || ! diff -rq "$source_dir" "$target_dir" >/dev/null 2
   omarchy-plugin-validate "$staging" || fail "the notification companion didn't pass Omarchy's plugin check"
 fi
 
+# Preserve the previous Island's settings and local edits before taking over
+# its menus, shortcuts and notification service. This does not run its old
+# uninstall script, which would switch the bar back after this setup finishes.
+python3 "$here/migrate-legacy.py" || fail "couldn't replace the previous Island; see the setup log"
+
 [[ -f $config ]] || echo '{}' >"$config"
 jq -e 'type == "object"' "$config" >/dev/null 2>&1 || fail "$config isn't valid JSON"
 cp "$config" "$config.bak.$(date +%s)"
@@ -67,7 +72,7 @@ disable='["omarchy.notifications","omarchy.osd"]'
 
 tmp=$(mktemp "$config.XXXXXX")
 jq --argjson disable "$disable" '
-  .plugins = ((.plugins // []) | if map(.id) | index("huesos.notifications") then . else . + [{ id: "huesos.notifications" }] end)
+  .plugins = ((.plugins // []) | if map(if type == "object" then .id else . end) | index("huesos.notifications") then . else . + [{ id: "huesos.notifications" }] end)
   | .disabledPlugins = (((.disabledPlugins // []) + $disable) | unique)
 ' "$config" >"$tmp"
 mv "$tmp" "$config"
@@ -139,6 +144,9 @@ fi
 omarchy-menu refresh >/dev/null 2>&1 || true
 
 bash "$here/bindings.sh" init
+# Migrated bindings already have the current format, so init only adds their
+# loader. Apply that loader even when Hyprland's file watch is unavailable.
+hyprctl reload >/dev/null 2>&1 || true
 
 # Last: this is what makes the shell reload the island.
 if [[ -n $staging ]]; then

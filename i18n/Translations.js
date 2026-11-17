@@ -1,6 +1,7 @@
 .pragma library
 
 var ru = {
+  "Replace Previous Island": "Заменить прежний Island",
   "General": "Основные",
   "Language": "Язык",
   "Interface language": "Язык интерфейса",

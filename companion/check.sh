@@ -18,6 +18,32 @@ target_dir="$HOME/.config/omarchy/plugins/huesos.notifications"
 config="$HOME/.config/omarchy/shell.json"
 menu="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
 
+# Existing Island RU installations also need setup again when an upstream
+# Island installation is still present alongside them.
+for old_id in guilhermerisu.island guilhermerisu.notifications; do
+  old_path="$HOME/.config/omarchy/plugins/$old_id"
+  if [[ -e $old_path || -L $old_path ]]; then
+    echo legacy
+    exit 0
+  fi
+done
+if [[ -e $HOME/.config/hypr/island-bindings.lua || -L $HOME/.config/hypr/island-bindings.lua ]]; then
+  echo legacy
+  exit 0
+fi
+if [[ -f $config ]] && jq -e '
+  .bar.id == "guilhermerisu.island" or
+  any((.plugins // [])[]; (if type == "object" then .id else . end) as $id |
+    $id == "guilhermerisu.island" or $id == "guilhermerisu.notifications")
+' "$config" >/dev/null 2>&1; then
+  echo legacy
+  exit 0
+fi
+if grep -Eq 'omarchy-shell[[:space:]]+guilhermerisu\.island([[:space:]]|$)' "$menu" "$HOME"/.config/hypr/*.lua 2>/dev/null; then
+  echo legacy
+  exit 0
+fi
+
 if [[ ! -f $target_dir/manifest.json ]]; then
   echo missing
   exit 0
@@ -29,7 +55,7 @@ if ! diff -rq "$source_dir" "$target_dir" >/dev/null 2>&1; then
 fi
 
 if ! jq -e '
-  ((.plugins // []) | map(.id) | index("huesos.notifications")) != null
+  ((.plugins // []) | map(if type == "object" then .id else . end) | index("huesos.notifications")) != null
   and ((.disabledPlugins // []) | index("omarchy.notifications")) != null
   and ((.disabledPlugins // []) | index("omarchy.osd")) != null
 ' "$config" >/dev/null 2>&1; then
