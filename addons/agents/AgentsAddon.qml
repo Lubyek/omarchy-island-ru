@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import ".."
 
@@ -10,18 +11,23 @@ import ".."
 // regenerated then and every few minutes while it stays open; the collectors
 // reuse their recent transcript scans, so only the limits go over the wire.
 //
-// While Claude Code works, it's a live activity too (see AgentsPill): its
-// turn as it goes, read from its transcripts by live.py, with Clawd
-// (AgentsMascot) acting it out. It says when a turn's done.
+// The same addon also supplies live sessions to the activities hub.
 Addon {
   id: agentsAddon
   pill: Component { AgentsPill { agents: agentsAddon } }
-  ongoing: working || finished
-  pillWidth: 236
-  // Claude's orange, or the theme's accent when live activities aren't
-  // colorful; amber while it waits on you.
-  readonly property color ink: asking ? host.theme.system.orange
-    : host.settings.colorfulLiveActivities ? "#d97757" : host.theme.accent
+  ongoing: !!live && (addon.option("prioritizeMedia") !== false || !host.mediaAvailable)
+  pillWidth: 172
+  readonly property var live: host.liveActivities?.activeAgents[0] || null
+  readonly property color ink: live ? host.agentTint(live) : host.theme.accent
+  property double now: Date.now()
+  readonly property real turnTime: live ? Math.max(0, now - live.startedAt) : 0
+  Timer {
+    interval: 1000
+    repeat: true
+    running: agentsAddon.pillShown && !!agentsAddon.live
+    triggeredOnStart: true
+    onTriggered: agentsAddon.now = Date.now()
+  }
   // Drawn with the picked agent's logo, not the addon's, at its size; the
   // pane leads with the agent as its own header (see AgentsPage).
   settingsPages: [{
@@ -45,13 +51,13 @@ Addon {
   readonly property bool watching: host.view === "settings" || zoneViews > 0
   readonly property string usageDir: host.home + "/.local/state/omarchy/agents/usage"
   readonly property string recordPath: provider.id === "all"
-    ? host.home + "/.cache/huesos.island/agents/all.json"
+    ? (Quickshell.env("XDG_CACHE_HOME") || host.home + "/.cache") + "/huesos.island/agents/all.json"
     : usageDir + "/" + provider.id + ".json"
 
   // The latest record for the picked agent, or null before one is read.
   property var record: null
   property bool updating: false
-  onProviderChanged: { record = null; recordFile.reload(); refresh() }
+  onProviderChanged: { record = null; recordFile.reload(); if (watching) refresh() }
   onWatchingChanged: if (watching) { recordFile.reload(); refresh() }
 
   FileView {
@@ -110,16 +116,19 @@ Addon {
     onTriggered: agentsAddon.refresh()
   }
 
-  // ---------- Live activity ----------
-
-  // Claude Code's sessions at work, newest first (see live.py); the pill
-  // shows the newest.
   property var sessions: []
-  readonly property var session: sessions.length ? sessions[0] : null
-  readonly property bool working: sessions.some(function(s) { return s.state !== "done" })
-  readonly property var live: working ? sessions.filter(function(s) { return s.state !== "done" })[0] : session
-  // Waiting on your answer to a question or its plan.
-  readonly property bool asking: !!live && live.state === "asking"
+  property url stackySource: ""
+  readonly property bool hasCodexSession: sessions.some(function(s) { return s.provider === "codex" })
+  onHasCodexSessionChanged: if (hasCodexSession && !String(stackySource) && !stackyAsset.running)
+    stackyAsset.running = true
+
+  Process {
+    id: stackyAsset
+    command: ["python3", agentsAddon.host.setup.companionDir + "/stacky-asset.py"]
+    stdout: StdioCollector {
+      onStreamFinished: if (text.trim()) agentsAddon.stackySource = text.trim()
+    }
+  }
 
   Process {
     id: liveWatch
@@ -127,7 +136,7 @@ Addon {
     command: ["python3", agentsAddon.localPath("live.py")]
     stdout: SplitParser {
       onRead: function(line) {
-        try { agentsAddon.takeSessions(JSON.parse(line).sessions || []) } catch (e) {}
+        try { agentsAddon.sessions = JSON.parse(line).sessions || [] } catch (e) {}
       }
     }
     stderr: StdioCollector {
@@ -135,48 +144,4 @@ Addon {
     }
     onRunningChanged: if (!running) agentsAddon.sessions = []
   }
-
-  // A turn that ends while it's shown says so on the pill a moment, as a
-  // call that ends does (see AgentsPill); it stays while the pointer's on
-  // it.
-  property bool finished: false
-  function takeSessions(next) {
-    var wasWorking = working
-    sessions = next
-    if (wasWorking && !working && next.length && next[0].state === "done") {
-      finished = true
-      finishedTimer.restart()
-    } else if (working) {
-      finished = false
-      finishedTimer.stop()
-    }
-  }
-  Timer {
-    id: finishedTimer
-    interval: 4000
-    onTriggered: if (agentsAddon.hovered) restart(); else agentsAddon.finished = false
-  }
-
-  // The turn's time, by the second while it's on screen; done, it stops
-  // where it ended.
-  property real now: Date.now()
-  Timer {
-    interval: 1000
-    repeat: true
-    running: agentsAddon.pillShown && agentsAddon.working
-    triggeredOnStart: true
-    onTriggered: agentsAddon.now = Date.now()
-  }
-  readonly property real turnTime: !live || !live.startedAt ? 0
-    : Math.max(0, (live.state === "done" ? live.doneAt : now) - live.startedAt)
-  // 0:04, 12:31, 1:02:10
-  function timeText(ms) {
-    var s = Math.max(0, Math.floor(ms / 1000))
-    var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60)
-    var ss = ("0" + s % 60).slice(-2)
-    return h > 0 ? h + ":" + ("0" + m).slice(-2) + ":" + ss : m + ":" + ss
-  }
-
-  // Held by the pointer, a finished turn's "Done" stays (see finishedTimer).
-  property bool hovered: false
 }

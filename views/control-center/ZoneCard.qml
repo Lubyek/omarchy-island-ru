@@ -3,6 +3,7 @@ import "../../i18n" as Locale
 import QtQuick.Layouts
 import "../../addons"
 import "../../components"
+import "../activities"
 
 // One zone of the control center, in its column: what it holds (the control
 // grid, the notifications, or an addon's zone, see addons/Addon.qml) and, in
@@ -146,6 +147,14 @@ ColumnLayout {
   }
   Component { id: controlsZone; ControlLayout { center: zone.center } }
   Component { id: notificationsZone; NotificationHistory { center: zone.center } }
+
+  ActivityHub {
+    Layout.fillWidth: true
+    host: zone.center.host
+    active: zone.center.active && shown
+    shown: zone.zoneId === "controls" && !zone.center.editMode && host.liveActivities.entries.length > 0
+  }
+
 
   // An addon's zone: made in this loader, so the component's parent has
   // `center` and `zoneActive`; as wide as the column, as tall as it is.

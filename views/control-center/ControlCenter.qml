@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import Quickshell.Services.UPower
 import "../../addons"
 import "../../components"
+import "../activities"
 import "zones.js" as ZoneModel
 
 // A compact Control Center with grouped switches, sliders, and notifications.
@@ -297,6 +298,14 @@ ColumnLayout {
   }
 
   ZoneColumns { id: zoneBoardItem; center: cc }
+
+  ActivityHub {
+    Layout.fillWidth: true
+    host: cc.host
+    active: cc.active && shown
+    shown: !cc.editMode && cc.zones.absent.indexOf("controls") !== -1 && host.liveActivities.entries.length > 0
+  }
+
 
   Rectangle {
     visible: !cc.editMode && cc.zones.empty

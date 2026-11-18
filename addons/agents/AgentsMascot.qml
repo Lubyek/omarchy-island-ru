@@ -14,6 +14,7 @@ Item {
   property color eyeColor: "#000000"
   property string mood: "rest"
   property bool running: true
+  property real tempo: 1
   property real unit: 1
   implicitWidth: 24 * unit
   implicitHeight: 15 * unit
@@ -21,7 +22,7 @@ Item {
   property int tick: 0
   onMoodChanged: { tick = 0; move = 0 }
   Timer {
-    interval: 150
+    interval: Math.max(65, Math.round(150 * clawd.tempo))
     repeat: true
     // Done, it hops once and settles.
     running: clawd.running && (clawd.mood !== "done" || clawd.tick < 6)

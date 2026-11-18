@@ -31,12 +31,17 @@ Item {
   // then the media playing. None shows while the companion needs setting up.
   readonly property bool resting: view === "rest" && !setup.needsSetup
   readonly property bool recordingPill: resting && settings.screenRecordingActivity && recorder.active
+    && !liveActivities.isHidden("recording")
   readonly property bool restingFree: resting && !recordingPill && !addons.ongoing
-  readonly property bool downloadDone: restingFree
-    && (downloads.finishedName !== "" || packages.finishedTitle !== "")
-  readonly property bool downloadActive: restingFree && (downloads.active || packages.active) && !downloadDone
+  readonly property bool visibleFileActivity: !liveActivities.isHidden("downloads") && (downloads.active || downloads.finishedName !== "")
+  readonly property bool visibleUpdateActivity: !liveActivities.isHidden("updates") && (packages.active || packages.finishedTitle !== "")
+  readonly property bool downloadDone: restingFree && (visibleFileActivity ? downloads.finishedName !== ""
+    : visibleUpdateActivity && packages.finishedTitle !== "")
+  readonly property bool downloadActive: restingFree && (visibleFileActivity || visibleUpdateActivity) && !downloadDone
   readonly property bool downloadPill: downloadDone || downloadActive
-  readonly property bool mediaPill: restingFree && !downloadPill && nowPlaying.playing && settings.mediaPill
+  readonly property bool mediaAvailable: nowPlaying.playing && settings.mediaPill
+    && !liveActivities.isHidden(liveActivities.mediaKey)
+  readonly property bool mediaPill: restingFree && !downloadPill && mediaAvailable
   // The live-activity pills' height, and the resting clock's.
   readonly property real pillHeight: settings.notch ? 40 : 44
   readonly property real clockHeight: clockStacked ? (settings.notch ? 40 : 42) : (settings.notch ? 36 : 40)
@@ -53,11 +58,11 @@ Item {
   PackageUpdateTracker { id: packageTracker; enabled: root.settings.systemUpdates }
   Process { id: downloadOpener }
   function openDownloads() {
-    if (!downloads.active && downloads.finishedName === "") {
+    if (!visibleFileActivity) {
       packages.dismissFinished()
       return
     }
-    var path = downloadDone ? downloads.finishedPath : downloads.folder
+    var path = downloads.finishedName !== "" ? downloads.finishedPath : downloads.folder
     downloads.dismissFinished()
     downloadOpener.command = ["sh", "-c", '[ -e "$1" ] && exec xdg-open "$1"; exec xdg-open "$(dirname "$1")"', "sh", path]
     downloadOpener.startDetached()
@@ -201,6 +206,59 @@ Item {
 
   readonly property var addons: addonHost
   Addons { id: addonHost; host: root; settings: root.settings }
+
+  readonly property var agents: addons.root("agents")
+  readonly property var agentSessions: agents ? agents.sessions : []
+  readonly property LiveActivities liveActivities: LiveActivities { host: root }
+  function openAgentWindow(session) {
+    if (!session || agentWindow.running || agentFocusDelay.running) return
+    agentWindow.targetNoticeKey = session.noticeKind ? liveActivities.noticeKey(session) : ""
+    agentWindow.returnView = surfaceOpen ? view : ""
+    agentWindow.command = ["python3", setup.companionDir + "/agent_window.py", JSON.stringify(session)]
+    if (surfaceOpen) {
+      // Release the Control Center's exclusive layer keyboard focus before
+      // activating the window, especially when its scratchpad opens too.
+      view = "rest"
+      agentFocusDelay.restart()
+    } else {
+      agentWindow.running = true
+    }
+  }
+  Timer {
+    id: agentFocusDelay
+    interval: 120
+    onTriggered: agentWindow.running = true
+  }
+  Process {
+    id: agentWindow
+    property string targetNoticeKey: ""
+    property string returnView: ""
+    onExited: function(code) {
+      if (code === 0) {
+        var notice = root.liveActivities.notice
+        if (notice && root.liveActivities.noticeKey(notice) === targetNoticeKey) root.liveActivities.advanceNotice()
+      } else if (returnView && root.view === "rest" && root.surfaceOpenFor(returnView)) {
+        root.view = returnView
+      } else if (!root.surfaceOpen && !root.liveActivities.notice) {
+        root.showFeedback(Locale.I18n.tr("The agent window is unavailable"), 1400, "system")
+      }
+    }
+  }
+  function agentGlyph(session) {
+    return session.provider === "codex" ? "" : session.provider === "claude" ? "" : "󰆍"
+  }
+  function agentMascotTint(session) {
+    if (session?.provider === "codex") return "#aca1c8"
+    if (session?.provider === "claude") return "#d97757"
+    return settings.colorfulLiveActivities ? "#bf8af6" : theme.accent
+  }
+  function agentTint(session) {
+    if (session.state === "asking") return "#ff9f0a"
+    if (session.state === "done") return "#30d158"
+    if (session.state === "failed") return "#ff453a"
+    if (!settings.colorfulLiveActivities) return theme.accent
+    return session.provider === "claude" ? "#d97757" : session.provider === "codex" ? "#64d2ff" : "#bf8af6"
+  }
 
   readonly property var keyboard: keyboardLayout
   KeyboardLayout { id: keyboardLayout }
@@ -488,7 +546,19 @@ Item {
         playing: root.audioSpectrum.playing, levels: root.audioSpectrum.levels,
         error: root.audioSpectrum.lastError})
     }
+    function activityStatus(): string {
+      var timer = root.addons.root("timer")
+      var notice = root.liveActivities.notice
+      return JSON.stringify({view: root.view, mediaPlaying: root.nowPlaying.playing,
+        timer: timer ? timer.phase : "disabled", agents: root.agentSessions.map(function(s) {
+          return {id: s.id, name: s.name, provider: s.provider, state: s.state, startedAt: s.startedAt, doneAt: s.doneAt}
+        }), primary: root.addonPill?.addon.id || (root.mediaPill ? "media" : ""),
+        hidden: root.liveActivities.hiddenEntries.length,
+        completion: notice && notice.noticeKind !== "asking" ? notice.name : "",
+        question: notice?.noticeKind === "asking" ? notice.name : ""})
+    }
     function show(name: string): string {
+      if (name === "activities") return root.toggleView("controls")
       // A view that isn't there (a disabled addon's) leaves the island alone.
       if (!root.surfaceOpenFor(name)) return root.view
       if (name === "menu") root.menuRoute = "root"
@@ -657,12 +727,12 @@ Item {
         // whole screen does, so outsideArea can close it. While the island can
         // auto-hide, revealStrip takes hover input at the edge to slide it back.
         mask: Region {
-          item: root.closesOnOutsideClick ? outsideArea : window.islandHidden ? null : island
+          item: root.closesOnOutsideClick ? outsideArea : window.islandHidden || agentBanner.shown ? null : island
           regions: [
+            Region { item: agentBanner.shown ? agentBanner : null },
             Region { item: window.clickRevealArmed ? clickRevealStrip : null },
             Region { item: window.revealArmed ? revealStrip : null },
             Region { item: window.revealArmed && window.edgeRevealed ? revealBridge : null },
-            Region { item: satellitePill && satellitePill.shown && satellitePill.visible ? satellitePill : null },
             Region { item: hoverCapsules && hoverCapsules.shown ? hoverCapsules.leftGroup : null },
             Region { item: hoverCapsules && hoverCapsules.shown ? hoverCapsules.rightGroup : null }
           ]
@@ -743,7 +813,7 @@ Item {
           id: hoverCapsules
           host: root
           island: island
-          shown: (root.hoverMode === "capsules") && island.capsulesShown && !window.islandHidden
+          shown: (root.hoverMode === "capsules") && island.capsulesShown && !window.islandHidden && !agentBanner.shown
           anchors.fill: parent
           // Under the island, so the capsules can start tucked beneath it.
           z: -1
@@ -768,7 +838,7 @@ Item {
           readonly property real hideProgress: hideMotion.collapseProgress
           readonly property Item activeSurface: views.surfaceFor(root.view)
           readonly property Item activePill: pills.active
-          readonly property bool glanceHovered: clockHover.hovered || islandPointerHover.hovered || (satellitePill && satellitePill.isHovered)
+          readonly property bool glanceHovered: clockHover.hovered || islandPointerHover.hovered
           property bool glanceActive: false
           readonly property bool hasGlanceItems: glanceBar ? glanceBar.hasItems : false
           Timer {
@@ -884,6 +954,7 @@ Item {
           // the radius and clipping the pills and views rely on.
           color: "transparent"
           clip: true
+          opacity: agentBanner.visible && !root.surfaceOpen ? 1 - agentBanner.opacity : 1
           readonly property var cornerRadii: ({ topLeft: topLeftRadius, topRight: topRightRadius, bottomLeft: radius, bottomRight: radius })
           readonly property string outline: Squircle.path(width, height, cornerRadii, 0.6)
           // The same outline inset half a pixel, so a 1px edge stroke lands
@@ -944,7 +1015,7 @@ Item {
           MouseArea {
             id: islandTap
             anchors.fill: parent
-            enabled: !window.islandHidden && (root.view === "rest" || root.view === "feedback")
+            enabled: !window.islandHidden && !agentBanner.shown && (root.view === "rest" || root.view === "feedback")
             onPressed: squishHold.restart()
             onClicked: function(mouse) {
               feedbackTimer.stop()
@@ -994,6 +1065,12 @@ Item {
             Views { id: views; host: root; anchors.fill: parent }
           }
         }
+        AgentActivityBanner {
+          id: agentBanner
+          host: root
+          session: !window.hasScreensaver ? root.liveActivities.notice : null
+        }
+
         // Keep a faint light edge even at rest, so the black pill remains
         // visible against a black wallpaper; brighten it while interacting.
         Item {
@@ -1005,7 +1082,7 @@ Item {
           scale: island.scale
           transformOrigin: island.transformOrigin
           readonly property bool prominent: root.surfaceOpen || root.view === "feedback"
-          opacity: prominent ? 1 : (island.lifted || island.isGlanceExpanded) ? 0.9 : 0.75
+          opacity: (prominent ? 1 : (island.lifted || island.isGlanceExpanded) ? 0.9 : 0.75) * island.opacity
           visible: opacity > 0.01
           Behavior on opacity { MotionAnimation { theme: root.theme; pace: islandEdge.prominent || island.lifted || island.isGlanceExpanded ? "morph" : "exit"; curve: "fade" } }
           Shape {
@@ -1021,14 +1098,7 @@ Item {
           }
         }
 
-        MediaSatellitePill {
-          id: satellitePill
-          host: root
-          shape: island
-          visible: opacity > 0.01 && hideMotion.contentOpacity > 0.95 && !window.islandHidden
-          hasMediaInGlance: glanceBar ? (glanceBar.left1Kind === "media" || glanceBar.left2Kind === "media"
-            || glanceBar.right1Kind === "media" || glanceBar.right2Kind === "media") : false
-        }
+
       }
 
       // The strip Hyprland keeps free for the resting island, so tiled windows

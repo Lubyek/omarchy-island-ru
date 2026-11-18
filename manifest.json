@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "huesos.island",
   "name": "Island RU",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "author": "huesos",
-  "description": "Island fork with Russian UI, bilingual search, fullscreen hide animations, and real CAVA audio bars",
+  "description": "Dynamic Island for Omarchy with Russian UI, live agent activity, and CAVA audio bars",
   "kinds": [
     "bar"
   ],

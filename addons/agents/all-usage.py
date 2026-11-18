@@ -24,7 +24,7 @@ STATE = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local/state")
 DATA = Path(os.environ.get("XDG_DATA_HOME") or HOME / ".local/share")
 CACHE = Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache")
 RECORDS = STATE / "omarchy/agents/usage"
-OUT = CACHE / "guilhermerisu.island/agents/all.json"
+OUT = CACHE / "huesos.island/agents/all.json"
 
 # Providers the collectors already count, per source.
 COUNTED = {"opencode": {"anthropic", "openai"}, "pi": {"anthropic", "openai-codex"}}

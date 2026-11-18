@@ -14,13 +14,13 @@ IslandPill {
   readonly property var tracker: host.downloads
   // Package updates share this pill; file downloads take precedence.
   readonly property var packages: host.packages
-  readonly property bool packageMode: !tracker.active && tracker.finishedName === ""
+  readonly property bool packageMode: !host.visibleFileActivity
   readonly property bool downloading: host.downloadActive
   readonly property bool done: host.downloadDone
   readonly property color activityAccent: host.settings.colorfulLiveActivities ? pill.host.theme.system.green : host.theme.accent
 
   shown: host.downloadPill
-  pillWidth: done ? 380 : tracker.active ? 240 : 280
+  pillWidth: done ? 380 : packageMode ? 280 : 240
   pillHeight: done ? 76 : host.pillHeight
   keepsClock: !done
   // The finished file, or while downloading either side, opens it (or its

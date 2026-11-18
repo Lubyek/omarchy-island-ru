@@ -28,10 +28,13 @@ Item {
   }
 
   readonly property var settings: glanceBar.host.settings
-  readonly property string left1Kind: settings.glanceLeft1 || "workspace"
-  readonly property string left2Kind: settings.glanceLeft2 || "battery"
-  readonly property string right1Kind: settings.glanceRight1 || "weather"
-  readonly property string right2Kind: settings.glanceRight2 || "volume"
+  function visibleKind(kind) {
+    return kind === "media" && host.liveActivities.isHidden(host.liveActivities.mediaKey) ? "none" : kind
+  }
+  readonly property string left1Kind: visibleKind(settings.glanceLeft1 || "workspace")
+  readonly property string left2Kind: visibleKind(settings.glanceLeft2 || "battery")
+  readonly property string right1Kind: visibleKind(settings.glanceRight1 || "weather")
+  readonly property string right2Kind: visibleKind(settings.glanceRight2 || "volume")
 
   readonly property bool hasLeftItems: (left1Kind !== "none" && left1Kind !== "") || (left2Kind !== "none" && left2Kind !== "")
   readonly property bool hasRightItems: (right1Kind !== "none" && right1Kind !== "") || (right2Kind !== "none" && right2Kind !== "")

@@ -230,38 +230,12 @@ ColumnLayout {
       iconTint: glanceGroup.tintFor(page.view.settings.glanceRight2 || "volume")
       label: "Right slot 2"
       detail: "Second item on the right side"
+      last: true
       SettingsPopUp {
         view: page.view
         options: glanceGroup.moduleChoices
         value: page.view.settings.glanceRight2 || "volume"
         onPicked: function(v) { page.view.settings.glanceRight2 = v }
-      }
-    }
-    SettingsRow {
-      view: page.view
-      icon: "󰝚"
-      iconTint: page.system.purple
-      label: "Floating music pill"
-      detail: "Show a satellite player pill under the island when music is playing"
-      last: page.view.settings.glanceMediaSatellite === false
-      SettingsSwitch {
-        view: page.view
-        checked: page.view.settings.glanceMediaSatellite !== false
-        onToggled: function(on) { page.view.settings.glanceMediaSatellite = on }
-      }
-    }
-    SettingsRow {
-      view: page.view
-      visible: page.view.settings.glanceMediaSatellite !== false
-      icon: "󰃚"
-      iconTint: page.system.purple
-      label: "Music pill border"
-      detail: "Draw a thin subtle outline around the floating music pill"
-      last: true
-      SettingsSwitch {
-        view: page.view
-        checked: page.view.settings.glanceMediaSatelliteBorder !== false
-        onToggled: function(on) { page.view.settings.glanceMediaSatelliteBorder = on }
       }
     }
   }
@@ -316,18 +290,6 @@ ColumnLayout {
         view: page.view
         checked: !!page.view.settings.capsuleWorkspaces
         onToggled: function(on) { page.view.settings.capsuleWorkspaces = on }
-      }
-    }
-    SettingsRow {
-      view: page.view
-      icon: "󰝚"
-      iconTint: page.system.cyan
-      label: "Now playing"
-      detail: "The track, with play and pause"
-      SettingsSwitch {
-        view: page.view
-        checked: !!page.view.settings.capsuleMedia
-        onToggled: function(on) { page.view.settings.capsuleMedia = on }
       }
     }
     // It needs the Plugins addon for the list, so turning it on turns that on.

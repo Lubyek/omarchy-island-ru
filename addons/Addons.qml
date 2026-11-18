@@ -137,11 +137,12 @@ Item {
         .concat([{ rect: true, color: "#a9bcc2", x: 0.5, y: 0.69, width: 0.5, height: 0.09, radius: 0.4 }]),
       description: "Show the layout on the pill when it changes" },
     // All Models' robot; its Settings pane takes the picked agent's logo.
-    { id: "agents", name: "Agents", icon: "󰚩", color: "#5e5ce6", default: false, source: "agents/AgentsAddon.qml",
+    { id: "agents", name: "Agents", icon: "󰚩", color: "#5e5ce6", default: true, source: "agents/AgentsAddon.qml",
       zone: { minWidth: 340 },
-      description: "Agent limits, daily tokens, and Claude Code at work",
+      description: "Agent limits, daily tokens, and live sessions",
       options: [
-        { key: "live", label: "Live Activity", detail: "Claude Code's steps on the island while it works", type: "switch", default: true },
+        { key: "live", label: "Live Activity", detail: "Show local agent and tool sessions on the island", type: "switch", default: true },
+        { key: "prioritizeMedia", label: "Agent before media", detail: "Give working agents priority over music and video", type: "switch", default: true },
         { key: "agent", label: "Agent", detail: "Usage read by Omarchy's agent collectors", type: "popup", default: "claude",
           choices: [{ label: "Claude", value: "claude" }, { label: "Codex", value: "codex" }, { label: "All Models", value: "all" }] }
       ] },
