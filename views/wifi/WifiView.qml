@@ -69,7 +69,7 @@ ColumnLayout {
   // the header, the card's padding and footer, the Speed Test row and dials).
   readonly property real listRoom: {
     var speedRoom = !canSpeedTest ? 0 : 51 + (speed.error !== "" ? 12 : 0) + (speed.running || speed.done ? 128 : 0)
-    return Window.height > 0 ? Math.min(460, Math.max(120, Window.height - 197 - speedRoom)) : 460
+    return Math.min(460, Math.max(120, host.screenHeight - 197 - speedRoom))
   }
 
   // Network being joined, so its connectionFailed can be reported.

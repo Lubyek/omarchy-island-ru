@@ -32,16 +32,26 @@ ListPicker {
   }
   onActiveChanged: {
     if (!active) return
-    var route = MenuModel.resolveRoute(items_, itemOrder, host.menuRoute || "root")
-    activeMenu = MenuModel.item(items_, route) ? route : "root"
+    activeMenu = "root"
     navStack = []
+    pendingRoute = host.menuRoute || "root"
+    resolveInitialRoute()
     evaluateGuards()
-    loadProvider(activeMenu)
   }
   onQueryChanged: if (active && query.trim()) loadProvidersForSearch()
 
   readonly property string omarchyPath: Quickshell.env("OMARCHY_PATH") || "/usr/share/omarchy"
   property var launcher: null
+  property string pendingRoute: ""
+
+  function resolveInitialRoute() {
+    if (!active || !pendingRoute) return
+    var route = MenuModel.resolveRoute(items_, itemOrder, pendingRoute)
+    if (!MenuModel.item(items_, route)) return
+    pendingRoute = ""
+    activeMenu = route
+    loadProvider(route)
+  }
 
   // ---------- Menu data ----------
 
@@ -78,6 +88,7 @@ ListPicker {
     items_ = merged.items
     itemOrder = merged.itemOrder
     mergeApps()
+    resolveInitialRoute()
     evaluateGuards()
     if (active && query.trim()) loadProvidersForSearch()
   }
@@ -332,6 +343,7 @@ ListPicker {
   }
   function activate(row) {
     if (!row || row.disabled) return
+    pendingRoute = ""
     // The Apps submenu is a native list in Omarchy's menu; the island's
     // launcher covers it.
     if (row.provider === "apps") { host.view = "apps"; return }

@@ -48,7 +48,11 @@ Item {
 
   readonly property var nowPlaying: nowPlayingData
   readonly property var audioSpectrum: cavaSpectrum
-  AudioSpectrum { id: cavaSpectrum }
+  AudioSpectrum {
+    id: cavaSpectrum
+    wanted: root.nowPlaying.playing && window.visible && !window.islandHidden
+      && (root.view === "player" || (mediaPillItem.shown && !agentBanner.shown))
+  }
   NowPlaying { id: nowPlayingData; shell: root.shell; theme: root.theme }
   readonly property var recorder: screenRecorder
   ScreenRecorder { id: screenRecorder }
@@ -88,6 +92,8 @@ Item {
     if (focused && focused.name) return String(focused.name)
     return screens.length ? String(screens[0].name) : ""
   }
+  readonly property var outputScreen: Quickshell.screens.find(screen => screen.name === outputName) || null
+  readonly property int screenHeight: outputScreen ? outputScreen.height : 1000
   readonly property string home: Quickshell.env("HOME")
 
   readonly property var theme: themeData
@@ -622,506 +628,542 @@ Item {
     onTriggered: root.outsideClickArmed = true
   }
   onSurfaceOpenChanged: if (!surfaceOpen) outsideClickArmed = false
-  Variants {
-    model: Quickshell.screens
-    delegate: Component { Scope {
-      id: perScreen
-      required property var modelData
-      PanelWindow {
-        id: window
-        screen: perScreen.modelData
-        visible: perScreen.modelData.name === root.outputName
-        color: "transparent"
-        surfaceFormat.opaque: false
-        exclusionMode: ExclusionMode.Ignore
-        anchors { top: true; bottom: true; left: true; right: true }
-        WlrLayershell.namespace: "omarchy-island"
-        WlrLayershell.layer: WlrLayer.Overlay
-        WlrLayershell.keyboardFocus: island.activeSurface && island.activeSurface.wantsKeyboard
-          ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+  component MonitorState: QtObject {
+    required property var screen
+    readonly property var monitor: screen ? Hyprland.monitorFor(screen) : null
+    readonly property var activeWorkspace: monitor?.activeWorkspace || Hyprland.focusedWorkspace
+    readonly property bool autoHideCondition: root.screensaverActive || fullscreen || tiled
 
-        readonly property var monitor: Hyprland.monitorFor(screen)
-        readonly property var activeWorkspace: (monitor && monitor.activeWorkspace) ? monitor.activeWorkspace : Hyprland.focusedWorkspace
+    readonly property bool fullscreen: {
+      if (!root.settings.autoHideFullscreen || !activeWorkspace) return false
+      if (activeWorkspace.hasFullscreen) return true
+      return activeWorkspace.toplevels.values.some(toplevel => toplevel.wayland?.fullscreen)
+    }
+    readonly property bool tiled: {
+      if (!root.settings.autoHideTiling || !activeWorkspace) return false
+      return activeWorkspace.toplevels.values.some(toplevel => {
+        var ipc = toplevel.lastIpcObject
+        return ipc && ipc.mapped !== false && !ipc.hidden && !ipc.floating
+      })
+    }
+  }
 
-        readonly property bool hasFullscreen: {
-          var ws = activeWorkspace
-          if (!ws) return false
-          if (ws.hasFullscreen) return true
-          var tl = ws.toplevels.values
-          for (var i = 0; i < tl.length; i++)
-            if (tl[i].wayland && tl[i].wayland.fullscreen) return true
-          return false
+  // Move the same scene between outputs. The resting layer covers just the
+  // strip with the pills, capsules and banners. Expand it for outside clicks
+  // and tall notifications, and keep it expanded until the collapse settles.
+  PanelWindow {
+    id: window
+    screen: root.outputScreen
+    visible: root.outputScreen !== null
+    color: "transparent"
+    surfaceFormat.opaque: false
+    exclusionMode: ExclusionMode.Ignore
+    anchors { top: true; left: true; right: true }
+    implicitHeight: expanded ? root.screenHeight : 96
+    WlrLayershell.namespace: "omarchy-island"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: island.activeSurface && island.activeSurface.wantsKeyboard
+      ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+
+    MonitorState { id: monitorState; screen: window.screen }
+    readonly property Item hoverCapsules: capsulesLoader.item
+
+    property bool expanded: false
+    readonly property bool needsFullHeight: root.surfaceOpen || root.notificationPill
+    onNeedsFullHeightChanged: {
+      if (needsFullHeight) {
+        compactTimer.stop()
+        expanded = true
+      } else {
+        compactTimer.restart()
+      }
+    }
+    Timer {
+      id: compactTimer
+      // Reopening a panel in quick succession can reuse the Wayland buffers.
+      interval: Math.max(2400, root.theme.motionDuration("morph") + root.theme.morphLag)
+      onTriggered: window.expanded = false
+    }
+
+    property bool edgeRevealed: false
+    onScreenChanged: {
+      edgeRevealed = false
+      edgeLeaveTimer.stop()
+    }
+    readonly property bool manuallyHiddenAtRest: root.manuallyHidden && root.view === "rest"
+    readonly property bool edgeClickAllowed: visible && !root.screensaverActive && root.view === "rest"
+    readonly property bool clickRevealArmed: edgeClickAllowed && root.manuallyHidden
+
+    MotionSpring {
+      id: manualMotion
+      theme: root.theme
+      pace: root.manuallyHidden ? "collapse" : "expressive"
+      bounce: root.manuallyHidden ? 0 : 0.27
+      target: window.manuallyHiddenAtRest ? 100 : 0
+    }
+
+    component EdgeClick: MouseArea {
+      required property bool revealing
+      anchors.fill: parent
+      z: 10
+      acceptedButtons: Qt.RightButton
+
+      onClicked: {
+        if (revealing && window.isEffectivelyHidden) {
+          window.edgeRevealed = true
+          edgeLeaveTimer.restart()
         }
-        readonly property bool hasScreensaver: root.screensaverActive
-
-        readonly property bool hasTiled: {
-          var ws = activeWorkspace
-          var tl = ws ? ws.toplevels.values : []
-          for (var i = 0; i < tl.length; i++) {
-            var ipc = tl[i].lastIpcObject
-            if (ipc && ipc.mapped !== false && !ipc.hidden && !ipc.floating) return true
-          }
-          return false
+        if (!revealing) {
+          island.glanceActive = false
+          island.capsulesActive = false
+          capsulesEnterTimer.stop()
         }
+        root.manuallyHidden = !revealing
+      }
+    }
 
-        readonly property bool autoHideCondition: (
-          (root.settings.autoHideFullscreen && hasFullscreen) ||
-          hasScreensaver ||
-          (root.settings.autoHideTiling && hasTiled)
-        )
+    Timer {
+      id: edgeLeaveTimer
+      interval: 400
+      onTriggered: if (!revealHover.hovered && !bridgeHover.hovered && !islandPointerHover.hovered)
+        window.edgeRevealed = false
+    }
 
-        property bool edgeRevealed: false
-        readonly property bool manuallyHiddenAtRest: root.manuallyHidden && root.view === "rest"
-        readonly property bool edgeClickAllowed: visible && !hasScreensaver && root.view === "rest"
-        readonly property bool clickRevealArmed: edgeClickAllowed && root.manuallyHidden
+    readonly property bool isEffectivelyHidden: (root.barHidden || monitorState.autoHideCondition)
+      && (root.view === "rest" || root.screensaverActive)
+    onIsEffectivelyHiddenChanged: if (!isEffectivelyHidden) {
+      edgeRevealed = false
+      edgeLeaveTimer.stop()
+    }
 
-        MotionSpring {
-          id: manualMotion
-          theme: root.theme
-          pace: root.manuallyHidden ? "collapse" : "expressive"
-          bounce: root.manuallyHidden ? 0 : 0.27
-          target: window.manuallyHiddenAtRest ? 100 : 0
-        }
+    // Hover at the top edge can bring a hidden island back.
+    readonly property bool revealArmed: isEffectivelyHidden && !root.screensaverActive && !root.manuallyHidden
 
-        component EdgeClick: MouseArea {
-          required property bool revealing
-          anchors.fill: parent
-          z: 10
-          acceptedButtons: Qt.RightButton
+    readonly property bool autoHidden: root.screensaverActive || (isEffectivelyHidden && !edgeRevealed && !root.manuallyHidden)
+    readonly property bool islandHidden: manuallyHiddenAtRest || autoHidden
 
-          onClicked: {
-            if (revealing && window.isEffectivelyHidden) {
-              window.edgeRevealed = true
-              edgeLeaveTimer.restart()
-            }
-            if (!revealing) {
-              island.glanceActive = false
-              island.capsulesActive = false
-              capsulesEnterTimer.stop()
-            }
-            root.manuallyHidden = !revealing
-          }
-        }
+    // Only the island takes input, except while a view is open: then the
+    // whole screen does, so outsideArea can close it. While the island can
+    // auto-hide, revealStrip takes hover input at the edge to slide it back.
+    mask: Region {
+      item: root.closesOnOutsideClick ? outsideArea : window.islandHidden || agentBanner.shown ? null : island
+      regions: [
+        Region { item: agentBanner.shown ? agentBanner : null },
+        Region { item: window.clickRevealArmed ? clickRevealStrip : null },
+        Region { item: window.revealArmed ? revealStrip : null },
+        Region { item: window.revealArmed && window.edgeRevealed ? revealBridge : null },
+        Region { item: window.hoverCapsules?.shown ? window.hoverCapsules.leftGroup : null },
+        Region { item: window.hoverCapsules?.shown ? window.hoverCapsules.rightGroup : null }
+      ]
+    }
+    MouseArea {
+      id: outsideArea
+      anchors.fill: parent
+      enabled: root.closesOnOutsideClick
+      acceptedButtons: Qt.AllButtons
+      // Clicks on the island's blank space fall through to here too.
+      onPressed: function(mouse) {
+        if (!island.contains(mapToItem(island, mouse.x, mouse.y))) root.view = "rest"
+      }
+    }
 
-        Timer {
-          id: edgeLeaveTimer
-          interval: 400
-          onTriggered: if (!revealHover.hovered && !bridgeHover.hovered && !islandPointerHover.hovered)
-            window.edgeRevealed = false
-        }
+    Item {
+      id: clickRevealStrip
+      anchors.top: parent.top
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: Math.max(100, Math.min(280, island.targetWidth))
+      height: 6
+      visible: window.clickRevealArmed
+      EdgeClick { revealing: true; enabled: window.clickRevealArmed }
+    }
 
-        readonly property bool isEffectivelyHidden: (root.barHidden || autoHideCondition)
-          && (root.view === "rest" || hasScreensaver)
-        onIsEffectivelyHiddenChanged: if (!isEffectivelyHidden) {
-          edgeRevealed = false
-          edgeLeaveTimer.stop()
-        }
+    Item {
+      id: revealStrip
+      anchors.top: parent.top
+      anchors.horizontalCenter: parent.horizontalCenter
+      // The whole top edge can summon the hidden island.
+      width: parent.width
+      height: window.revealArmed ? 4 : 0
+      visible: height > 0
 
-        // Hover at the top edge can bring a hidden island back.
-        readonly property bool revealArmed: isEffectivelyHidden && !hasScreensaver && !root.manuallyHidden
-
-        readonly property bool autoHidden: hasScreensaver || (isEffectivelyHidden && !edgeRevealed && !root.manuallyHidden)
-        readonly property bool islandHidden: manuallyHiddenAtRest || autoHidden
-
-        // Only the island takes input, except while a view is open: then the
-        // whole screen does, so outsideArea can close it. While the island can
-        // auto-hide, revealStrip takes hover input at the edge to slide it back.
-        mask: Region {
-          item: root.closesOnOutsideClick ? outsideArea : window.islandHidden || agentBanner.shown ? null : island
-          regions: [
-            Region { item: agentBanner.shown ? agentBanner : null },
-            Region { item: window.clickRevealArmed ? clickRevealStrip : null },
-            Region { item: window.revealArmed ? revealStrip : null },
-            Region { item: window.revealArmed && window.edgeRevealed ? revealBridge : null },
-            Region { item: hoverCapsules && hoverCapsules.shown ? hoverCapsules.leftGroup : null },
-            Region { item: hoverCapsules && hoverCapsules.shown ? hoverCapsules.rightGroup : null }
-          ]
-        }
-        MouseArea {
-          id: outsideArea
-          anchors.fill: parent
-          enabled: root.closesOnOutsideClick
-          acceptedButtons: Qt.AllButtons
-          // Clicks on the island's blank space fall through to here too.
-          onPressed: function(mouse) {
-            if (!island.contains(mapToItem(island, mouse.x, mouse.y))) root.view = "rest"
-          }
-        }
-
-        Item {
-          id: clickRevealStrip
-          anchors.top: parent.top
-          anchors.horizontalCenter: parent.horizontalCenter
-          width: Math.max(100, Math.min(280, island.targetWidth))
-          height: 6
-          visible: window.clickRevealArmed
-          EdgeClick { revealing: true; enabled: window.clickRevealArmed }
-        }
-
-        Item {
-          id: revealStrip
-          anchors.top: parent.top
-          anchors.horizontalCenter: parent.horizontalCenter
-          // The whole top edge can summon the hidden island.
-          width: parent.width
-          height: window.revealArmed ? 4 : 0
-          visible: height > 0
-
-          HoverHandler {
-            id: revealHover
-            onHoveredChanged: {
-              if (hovered) {
-                edgeLeaveTimer.stop()
-                window.edgeRevealed = true
-              } else {
-                if (!bridgeHover.hovered && !islandPointerHover.hovered) edgeLeaveTimer.restart()
-              }
-            }
-          }
-        }
-
-        // Keep the gap between the edge and the emerging pill interactive.
-        // Its bounds stay steady while the visible dot stretches and grows.
-        Item {
-          id: revealBridge
-          anchors.top: parent.top
-          anchors.horizontalCenter: parent.horizontalCenter
-          width: Math.max(island.targetWidth + 80, 260)
-          height: window.revealArmed && window.edgeRevealed
-            ? (root.settings.notch ? 0 : 8) + island.targetHeight + 12 : 0
-          visible: height > 0
-          HoverHandler {
-            id: bridgeHover
-            onHoveredChanged: {
-              if (hovered) edgeLeaveTimer.stop()
-              else if (!revealHover.hovered && !islandPointerHover.hovered) edgeLeaveTimer.restart()
-            }
+      HoverHandler {
+        id: revealHover
+        onHoveredChanged: {
+          if (hovered) {
+            edgeLeaveTimer.stop()
+            window.edgeRevealed = true
+          } else {
+            if (!bridgeHover.hovered && !islandPointerHover.hovered) edgeLeaveTimer.restart()
           }
         }
+      }
+    }
 
-        // While a view is open the island floats over the windows: a soft,
-        // wide shadow for depth plus a tight, darker one where it meets them
-        // (the resting pill stays flat, like hardware).
-        // Analytic shadows avoid resizing an offscreen blur texture on
-        // every frame of the opening spring.
-        IslandShadow { shape: island; offset.y: 2; blur: 8; spread: -1; color: Qt.rgba(0, 0, 0, 0.4) }
-        IslandShadow { shape: island; offset.y: 14; blur: 48; spread: -4; color: Qt.rgba(0, 0, 0, 0.6) }
-
-        // Hovering the resting island splits the bar's items into capsules
-        // beside it (see HoverCapsules).
-        HoverCapsules {
-          id: hoverCapsules
-          host: root
-          island: island
-          shown: (root.hoverMode === "capsules") && island.capsulesShown && !window.islandHidden && !agentBanner.shown
-          anchors.fill: parent
-          // Under the island, so the capsules can start tucked beneath it.
-          z: -1
+    // Keep the gap between the edge and the emerging pill interactive.
+    // Its bounds stay steady while the visible dot stretches and grows.
+    Item {
+      id: revealBridge
+      anchors.top: parent.top
+      anchors.horizontalCenter: parent.horizontalCenter
+      width: Math.max(island.targetWidth + 80, 260)
+      height: window.revealArmed && window.edgeRevealed
+        ? (root.settings.notch ? 0 : 8) + island.targetHeight + 12 : 0
+      visible: height > 0
+      HoverHandler {
+        id: bridgeHover
+        onHoveredChanged: {
+          if (hovered) edgeLeaveTimer.stop()
+          else if (!revealHover.hovered && !islandPointerHover.hovered) edgeLeaveTimer.restart()
         }
+      }
+    }
 
-        NotchEar { shape: island }
-        NotchEar { shape: island; mirrored: true }
+    // While a view is open the island floats over the windows: a soft,
+    // wide shadow for depth plus a tight, darker one where it meets them
+    // (the resting pill stays flat, like hardware).
+    // Analytic shadows avoid resizing an offscreen blur texture on
+    // every frame of the opening spring.
+    IslandShadow { shape: island; offset.y: 2; blur: 8; spread: -1; color: Qt.rgba(0, 0, 0, 0.4) }
+    IslandShadow { shape: island; offset.y: 14; blur: 48; spread: -4; color: Qt.rgba(0, 0, 0, 0.6) }
 
-        Rectangle {
-          id: island
-          x: (parent.width - width) / 2
-          AutoHideMotion {
-            id: hideMotion
-            theme: root.theme
-            hidden: window.autoHidden
-            edgeProgress: manualMotion.value / 100
-            expandedWidth: Math.max(40, widthSpring.value)
-            expandedHeight: Math.max(28, heightSpring.value)
-            restY: root.settings.notch ? 0 : 8
-          }
-          y: hideMotion.renderY
-          readonly property real hideProgress: hideMotion.collapseProgress
-          readonly property Item activeSurface: views.surfaceFor(root.view)
-          readonly property Item activePill: pills.active
-          readonly property bool glanceHovered: clockHover.hovered || islandPointerHover.hovered
-          property bool glanceActive: false
-          readonly property bool hasGlanceItems: glanceBar ? glanceBar.hasItems : false
-          Timer {
-            id: glanceLeaveTimer
-            interval: 180
-            onTriggered: island.glanceActive = false
-          }
-          onGlanceHoveredChanged: {
-            if (glanceHovered) {
-              glanceLeaveTimer.stop()
-              if (root.hoverMode === "expand" && island.hasGlanceItems && root.restingFree && !root.downloadPill && !island.hasNonMediaActivePill) island.glanceActive = true
-            } else {
-              glanceLeaveTimer.restart()
-            }
-          }
+    // Hovering the resting island splits the bar's items into capsules
+    // beside it (see HoverCapsules).
+    Loader {
+      id: capsulesLoader
+      active: root.hoverMode === "capsules"
+      anchors.fill: parent
+      // Under the island, so the capsules can start tucked beneath it.
+      z: -1
+      sourceComponent: HoverCapsules {
+        host: root
+        island: island
+        shown: island.capsulesShown && !window.islandHidden && !agentBanner.shown
+      }
+    }
 
-          readonly property bool capsulesHovered: clockHover.hovered || islandPointerHover.hovered || (hoverCapsules && hoverCapsules.hovered)
-          property bool capsulesActive: false
-          Timer {
-            id: capsulesLeaveTimer
-            interval: 180
-            onTriggered: island.capsulesActive = false
-          }
-          // A moment's pause before showing, like macOS's hover reveals, so
-          // passing over the island doesn't flash the capsules.
-          Timer {
-            id: capsulesEnterTimer
-            interval: root.theme.scaled(80)
-            onTriggered: if (root.hoverMode === "capsules" && root.resting) island.capsulesActive = true
-          }
-          onCapsulesHoveredChanged: {
-            if (capsulesHovered) {
-              capsulesLeaveTimer.stop()
-              if (!island.capsulesActive) capsulesEnterTimer.restart()
-            } else {
-              capsulesEnterTimer.stop()
-              capsulesLeaveTimer.restart()
-            }
-          }
+    NotchEar { shape: island }
+    NotchEar { shape: island; mirrored: true }
 
-          Connections {
-            target: root
-            function onViewChanged() {
-              if (root.view !== "rest" && !(root.volumePill && island.capsulesActive)) {
-                island.glanceActive = false
-                island.capsulesActive = false
-                glanceLeaveTimer.stop()
-                capsulesLeaveTimer.stop()
-                capsulesEnterTimer.stop()
-              }
-            }
+    Rectangle {
+      id: island
+      x: (parent.width - width) / 2
+      AutoHideMotion {
+        id: hideMotion
+        theme: root.theme
+        hidden: window.autoHidden
+        edgeProgress: manualMotion.value / 100
+        expandedWidth: Math.max(40, widthSpring.value)
+        expandedHeight: Math.max(28, heightSpring.value)
+        restY: root.settings.notch ? 0 : 8
+      }
+      y: hideMotion.renderY
+      readonly property real hideProgress: hideMotion.collapseProgress
+      readonly property Item activeSurface: views.surfaceFor(root.view)
+      readonly property Item activePill: pills.active
+      readonly property bool glanceHovered: clockHover.hovered || islandPointerHover.hovered
+      property bool glanceActive: false
+      readonly property Item glanceBar: glanceLoader.item
+      readonly property bool hasGlanceItems: glanceBar?.hasItems ?? false
+      Timer {
+        id: glanceLeaveTimer
+        interval: 180
+        onTriggered: island.glanceActive = false
+      }
+      onGlanceHoveredChanged: {
+        if (glanceHovered) {
+          glanceLeaveTimer.stop()
+          if (root.hoverMode === "expand" && island.hasGlanceItems && root.restingFree && !root.downloadPill && !island.hasNonMediaActivePill) island.glanceActive = true
+        } else {
+          glanceLeaveTimer.restart()
+        }
+      }
+
+      readonly property bool capsulesHovered: clockHover.hovered || islandPointerHover.hovered || (window.hoverCapsules?.hovered ?? false)
+      property bool capsulesActive: false
+      Timer {
+        id: capsulesLeaveTimer
+        interval: 180
+        onTriggered: island.capsulesActive = false
+      }
+      // A moment's pause before showing, like macOS's hover reveals, so
+      // passing over the island doesn't flash the capsules.
+      Timer {
+        id: capsulesEnterTimer
+        interval: root.theme.scaled(80)
+        onTriggered: if (root.hoverMode === "capsules" && root.resting) island.capsulesActive = true
+      }
+      onCapsulesHoveredChanged: {
+        if (capsulesHovered) {
+          capsulesLeaveTimer.stop()
+          if (!island.capsulesActive) capsulesEnterTimer.restart()
+        } else {
+          capsulesEnterTimer.stop()
+          capsulesLeaveTimer.restart()
+        }
+      }
+
+      Connections {
+        target: root
+        function onViewChanged() {
+          if (root.view !== "rest" && !(root.volumePill && island.capsulesActive)) {
+            island.glanceActive = false
+            island.capsulesActive = false
+            glanceLeaveTimer.stop()
+            capsulesLeaveTimer.stop()
+            capsulesEnterTimer.stop()
           }
-          readonly property bool hasNonMediaActivePill: pills.active !== null && pills.active !== mediaPillItem
-          readonly property bool isGlanceExpanded: island.glanceActive && (root.hoverMode === "expand") && island.hasGlanceItems && root.restingFree && !root.downloadPill && !island.hasNonMediaActivePill
-          readonly property bool capsulesShown: island.capsulesActive && (root.hoverMode === "capsules") && (root.resting || root.volumePill)
-          // How much wider than a bare time the chosen clock format is; the
-          // resting pill and the pills that keep the clock in the middle grow by it.
-          readonly property real clockExtra: Math.max(0, Math.ceil(clockLabel.advanceWidth || clockMetrics.advanceWidth) + 56 - 100)
-          readonly property real baseGlanceWidth: root.settings.notch ? 420 : 440
-          readonly property real glanceWidth: glanceBar && glanceBar.neededWidth > 0
-            ? Math.min(baseGlanceWidth + clockExtra, Math.max(180, glanceBar.neededWidth))
-            : baseGlanceWidth + clockExtra
-          readonly property real targetWidth: activeSurface ? activeSurface.islandWidth
-            : island.isGlanceExpanded ? island.glanceWidth
-            : activePill ? activePill.pillWidth + (activePill.keepsClock ? clockExtra : 0)
-            : root.view === "feedback" ? 280
-            : root.setup.needsSetup ? (root.setup.warning.length > 24 ? 320 : 250)
-            : 100 + clockExtra
-          readonly property real targetHeight: activeSurface ? activeSurface.islandHeight
-            : island.isGlanceExpanded ? (root.mediaPill ? root.pillHeight : root.clockHeight)
-            : activePill ? activePill.pillHeight
-            : root.view === "rest" ? root.clockHeight : 52
-          readonly property real targetRadius: activeSurface && activeSurface.cornerRadius > 0 ? activeSurface.cornerRadius
-            : activePill && activePill.pillRadius > 0 ? activePill.pillRadius
-            : root.surfaceOpen ? 30 : 38
-          readonly property real radiusCap: radiusSpring.value
-          radius: Math.min(width / 2, height / 2, root.settings.notch && !root.surfaceOpen ? Math.min(radiusCap, 16) : radiusCap)
-          topLeftRadius: root.settings.notch ? radius * hideMotion.collapseProgress : radius
-          topRightRadius: root.settings.notch ? radius * hideMotion.collapseProgress : radius
-          readonly property bool lifted: root.view === "rest" && clockHover.hovered && !root.settings.notch && !island.isGlanceExpanded && !island.capsulesShown
-          // Lifts a touch under the pointer and squishes while pressed, then
-          // springs back past its size on release, like the iPhone's island.
-          // The springs run in hundredths, as they settle to a tenth of a unit.
-          readonly property bool squished: !root.settings.notch && (islandTap.pressed || squishHold.running)
-          Timer { id: squishHold; interval: root.theme.motionDuration("press") }
-          MotionSpring { id: liftSpring; theme: root.theme; pace: "quick"; target: island.lifted ? 100 : 0 }
-          MotionSpring {
-            id: pressSpring
-            theme: root.theme
-            pace: island.squished ? "press" : "standard"
-            bounce: island.squished ? 0 : 0.35
-            target: island.squished ? 100 : 0
+        }
+      }
+      readonly property bool hasNonMediaActivePill: pills.active !== null && pills.active !== mediaPillItem
+      readonly property bool isGlanceExpanded: island.glanceActive && (root.hoverMode === "expand") && island.hasGlanceItems && root.restingFree && !root.downloadPill && !island.hasNonMediaActivePill
+      readonly property bool capsulesShown: island.capsulesActive && (root.hoverMode === "capsules") && (root.resting || root.volumePill)
+      // How much wider than a bare time the chosen clock format is; the
+      // resting pill and the pills that keep the clock in the middle grow by it.
+      readonly property real clockExtra: Math.max(0, Math.ceil(clockLabel.advanceWidth || clockMetrics.advanceWidth) + 56 - 100)
+      readonly property real baseGlanceWidth: root.settings.notch ? 420 : 440
+      readonly property real glanceWidth: glanceBar && glanceBar.neededWidth > 0
+        ? Math.min(baseGlanceWidth + clockExtra, Math.max(180, glanceBar.neededWidth))
+        : baseGlanceWidth + clockExtra
+      readonly property real surfaceWidth: activeSurface && (activeSurface.view || activeSurface.fixedWidth > 0)
+        ? activeSurface.islandWidth : widthSpring.target
+      readonly property real surfaceHeight: activeSurface?.view ? activeSurface.islandHeight : heightSpring.target
+      readonly property real targetWidth: activeSurface ? surfaceWidth
+        : island.isGlanceExpanded ? island.glanceWidth
+        : activePill ? activePill.pillWidth + (activePill.keepsClock ? clockExtra : 0)
+        : root.view === "feedback" ? 280
+        : root.setup.needsSetup ? (root.setup.warning.length > 24 ? 320 : 250)
+        : 100 + clockExtra
+      readonly property real targetHeight: activeSurface ? surfaceHeight
+        : island.isGlanceExpanded ? (root.mediaPill ? root.pillHeight : root.clockHeight)
+        : activePill ? activePill.pillHeight
+        : root.view === "rest" ? root.clockHeight : 52
+      readonly property real targetRadius: activeSurface && activeSurface.cornerRadius > 0 ? activeSurface.cornerRadius
+        : activePill && activePill.pillRadius > 0 ? activePill.pillRadius
+        : root.surfaceOpen ? 30 : 38
+      readonly property real radiusCap: radiusSpring.value
+      radius: Math.min(width / 2, height / 2, root.settings.notch && !root.surfaceOpen ? Math.min(radiusCap, 16) : radiusCap)
+      topLeftRadius: root.settings.notch ? radius * hideMotion.collapseProgress : radius
+      topRightRadius: root.settings.notch ? radius * hideMotion.collapseProgress : radius
+      readonly property bool lifted: root.view === "rest" && clockHover.hovered && !root.settings.notch && !island.isGlanceExpanded && !island.capsulesShown
+      // Lifts a touch under the pointer and squishes while pressed, then
+      // springs back past its size on release, like the iPhone's island.
+      // The springs run in hundredths, as they settle to a tenth of a unit.
+      readonly property bool squished: !root.settings.notch && (islandTap.pressed || squishHold.running)
+      Timer { id: squishHold; interval: root.theme.motionDuration("press") }
+      MotionSpring { id: liftSpring; theme: root.theme; pace: "quick"; target: island.lifted ? 100 : 0 }
+      MotionSpring {
+        id: pressSpring
+        theme: root.theme
+        pace: island.squished ? "press" : "standard"
+        bounce: island.squished ? 0 : 0.35
+        target: island.squished ? 100 : 0
+      }
+      scale: root.settings.notch ? 1.0 : (1 + liftSpring.value * 0.00018 - pressSpring.value * 0.0003)
+      // With the notch the island hangs from the top edge, so it scales from there.
+      transformOrigin: root.settings.notch ? Item.Top : Item.Center
+      EdgeClick {
+        revealing: false
+        enabled: window.edgeClickAllowed && !window.islandHidden
+      }
+      HoverHandler { id: clockHover; enabled: root.view === "rest" }
+      HoverHandler {
+        id: islandPointerHover
+        onHoveredChanged: {
+          if (hovered) {
+            edgeLeaveTimer.stop()
+          } else {
+            if (window.edgeRevealed && !revealHover.hovered && !bridgeHover.hovered) edgeLeaveTimer.restart()
           }
-          scale: root.settings.notch ? 1.0 : (1 + liftSpring.value * 0.00018 - pressSpring.value * 0.0003)
-          // With the notch the island hangs from the top edge, so it scales from there.
-          transformOrigin: root.settings.notch ? Item.Top : Item.Center
-          EdgeClick {
-            revealing: false
-            enabled: window.edgeClickAllowed && !window.islandHidden
-          }
-          HoverHandler { id: clockHover; enabled: root.view === "rest" }
-          HoverHandler {
-            id: islandPointerHover
-            onHoveredChanged: {
-              if (hovered) {
-                edgeLeaveTimer.stop()
-              } else {
-                if (window.edgeRevealed && !revealHover.hovered && !bridgeHover.hovered) edgeLeaveTimer.restart()
-              }
-            }
-          }
-          // The black itself is the squircle below; the Rectangle only keeps
-          // the radius and clipping the pills and views rely on.
-          color: "transparent"
-          clip: true
-          opacity: agentBanner.visible && !root.surfaceOpen ? 1 - agentBanner.opacity : 1
-          readonly property var cornerRadii: ({ topLeft: topLeftRadius, topRight: topRightRadius, bottomLeft: radius, bottomRight: radius })
-          readonly property string outline: Squircle.path(width, height, cornerRadii, 0.6)
-          // The same outline inset half a pixel, so a 1px edge stroke lands
-          // inside the shape. Only built while the edge shows, so a resting
-          // pill's morphs redraw one outline, not two.
-          readonly property string edgeOutline: !islandEdge.visible ? ""
-            : root.settings.notch && hideMotion.collapseProgress < 0.001 ? Squircle.notchPath(width - 1, height - 1, Math.max(0, radius - 0.5), 10, 0.6)
-            : Squircle.path(width - 1, height - 1, ({
-                topLeft: Math.max(0, topLeftRadius - 0.5), topRight: Math.max(0, topRightRadius - 0.5),
-                bottomLeft: Math.max(0, radius - 0.5), bottomRight: Math.max(0, radius - 0.5) }), 0.6)
-          Shape {
-            anchors.fill: parent
-            preferredRendererType: Shape.CurveRenderer
-            ShapePath {
-              strokeWidth: -1
-              fillColor: root.theme.background
-              Behavior on fillColor { MotionColorAnimation { theme: root.theme } }
-              PathSvg { path: island.outline }
-            }
-          }
-          // Width, height and corners ride springs, so a change of mind
-          // mid-morph keeps its momentum. Growing, the width leads and the
-          // height follows a beat later, each swinging a touch past its size
-          // as the Dynamic Island does; shrinking, the height goes first. A
-          // pill shrinking back (an activity ending) dips a little under its
-          // size before it settles, a shrug; closing a view lands flat.
-          // Going from one view to a smaller one is a way back, as quick as a close.
-          readonly property bool shrinkingToView: root.switchingSurface && (targetHeight < heightSpring.value - 1 || targetWidth < widthSpring.value - 1)
-          readonly property string morphPace: root.surfaceOpen && !shrinkingToView ? "morph" : "collapse"
-          MotionSpring { id: widthSpring; theme: root.theme; pace: island.morphPace }
-          MotionSpring { id: heightSpring; theme: root.theme; pace: island.morphPace }
-          MotionSpring { id: radiusSpring; theme: root.theme; pace: island.morphPace; target: island.targetRadius }
-          Timer { id: widthLag; interval: root.theme.morphLag; onTriggered: widthSpring.target = island.targetWidth }
-          Timer { id: heightLag; interval: root.theme.morphLag; onTriggered: heightSpring.target = island.targetHeight }
-          // A view settles its height over a few frames as it lays out; a
-          // lag already counting keeps counting and lands on the latest
-          // size, so the height still trails the width by one beat.
-          readonly property bool shrugs: !root.surfaceOpen && heightSpring.value <= 120
-          onTargetWidthChanged: {
-            widthSpring.bounce = targetWidth > widthSpring.value && !root.switchingSurface ? root.theme.morphBounce : shrugs ? root.theme.shrugBounce : 0
-            if (targetWidth < widthSpring.value) { if (!widthLag.running) widthLag.start(); return }
+        }
+      }
+      // The black itself is the squircle below; the Rectangle only keeps
+      // the radius and clipping the pills and views rely on.
+      color: "transparent"
+      clip: true
+      opacity: agentBanner.visible && !root.surfaceOpen ? 1 - agentBanner.opacity : 1
+      readonly property var cornerRadii: ({ topLeft: topLeftRadius, topRight: topRightRadius, bottomLeft: radius, bottomRight: radius })
+      readonly property string outline: Squircle.path(width, height, cornerRadii, 0.6)
+      // The same outline inset half a pixel, so a 1px edge stroke lands
+      // inside the shape. Only built while the edge shows, so a resting
+      // pill's morphs redraw one outline, not two.
+      readonly property string edgeOutline: !islandEdge.visible ? ""
+        : root.settings.notch && hideMotion.collapseProgress < 0.001 ? Squircle.notchPath(width - 1, height - 1, Math.max(0, radius - 0.5), 10, 0.6)
+        : Squircle.path(width - 1, height - 1, ({
+            topLeft: Math.max(0, topLeftRadius - 0.5), topRight: Math.max(0, topRightRadius - 0.5),
+            bottomLeft: Math.max(0, radius - 0.5), bottomRight: Math.max(0, radius - 0.5) }), 0.6)
+      Shape {
+        anchors.fill: parent
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+          strokeWidth: -1
+          fillColor: root.theme.background
+          Behavior on fillColor { MotionColorAnimation { theme: root.theme } }
+          PathSvg { path: island.outline }
+        }
+      }
+      // Width, height and corners ride springs, so a change of mind
+      // mid-morph keeps its momentum. Growing, the width leads and the
+      // height follows a beat later, each swinging a touch past its size
+      // as the Dynamic Island does; shrinking, the height goes first. A
+      // pill shrinking back (an activity ending) dips a little under its
+      // size before it settles, a shrug; closing a view lands flat.
+      // Going from one view to a smaller one is a way back, as quick as a close.
+      property bool shrinkingToView: false
+      readonly property string morphPace: root.surfaceOpen && !shrinkingToView ? "morph" : "collapse"
+      MotionSpring { id: widthSpring; theme: root.theme; pace: island.morphPace }
+      MotionSpring { id: heightSpring; theme: root.theme; pace: island.morphPace }
+      MotionSpring { id: radiusSpring; theme: root.theme; pace: island.morphPace; target: island.targetRadius }
+      Timer { id: widthLag; interval: root.theme.morphLag; onTriggered: widthSpring.target = island.targetWidth }
+      Timer { id: heightLag; interval: root.theme.morphLag; onTriggered: heightSpring.target = island.targetHeight }
+      // A view settles its height over a few frames as it lays out; a
+      // lag already counting keeps counting and lands on the latest
+      // size, so the height still trails the width by one beat.
+      readonly property bool shrugs: !root.surfaceOpen && heightSpring.value <= 120
+      onTargetWidthChanged: Qt.callLater(retarget)
+      onTargetHeightChanged: Qt.callLater(retarget)
+      function retarget() {
+        // Combine size changes from the view's layout into one retarget and
+        // keep the same spring response for the rest of that morph.
+        var shrinkingWidth = targetWidth < widthSpring.value
+        var growingHeight = targetHeight > heightSpring.value
+        shrinkingToView = root.switchingSurface
+          && (targetHeight < heightSpring.value - 1 || targetWidth < widthSpring.value - 1)
+        if (targetWidth !== widthSpring.target || widthLag.running) {
+          widthSpring.bounce = !shrinkingWidth && !root.switchingSurface ? root.theme.morphBounce : shrugs ? root.theme.shrugBounce : 0
+          if (shrinkingWidth) {
+            if (!widthLag.running) widthLag.start()
+          } else {
             widthLag.stop()
             widthSpring.target = targetWidth
           }
-          onTargetHeightChanged: {
-            heightSpring.bounce = targetHeight > heightSpring.value && !root.switchingSurface ? root.theme.morphBounce : shrugs ? root.theme.shrugBounce : 0
-            if (targetHeight > heightSpring.value) { if (!heightLag.running) heightLag.start(); return }
+        }
+        if (targetHeight !== heightSpring.target || heightLag.running) {
+          heightSpring.bounce = growingHeight && !root.switchingSurface ? root.theme.morphBounce : shrugs ? root.theme.shrugBounce : 0
+          if (growingHeight) {
+            if (!heightLag.running) heightLag.start()
+          } else {
             heightLag.stop()
             heightSpring.target = targetHeight
           }
-          Component.onCompleted: {
-            widthSpring.target = widthSpring.value = targetWidth
-            heightSpring.target = heightSpring.value = targetHeight
-          }
-          width: hideMotion.renderWidth
-          height: hideMotion.renderHeight
-
-          MouseArea {
-            id: islandTap
-            anchors.fill: parent
-            enabled: !window.islandHidden && !agentBanner.shown && (root.view === "rest" || root.view === "feedback")
-            onPressed: squishHold.restart()
-            onClicked: function(mouse) {
-              feedbackTimer.stop()
-              if (island.activePill) island.activePill.clicked(mouse)
-              else if (root.view === "rest" && root.setup.needsSetup) root.setup.pillClicked()
-              else root.view = "controls"
-            }
-          }
-
-          // Fade the content before the silhouette becomes a dot.
-          Item {
-            anchors.fill: parent
-            opacity: hideMotion.contentOpacity
-            enabled: !window.islandHidden
-
-            // The live activities (see IslandPill); at most one is shown at a time.
-            Item {
-              id: pills
-              anchors.fill: parent
-              readonly property Item active: {
-                for (var i = 0; i < children.length; i++) if (children[i].shown) return children[i]
-                return null
-              }
-              NotificationPill { host: root; shape: island; anchors.fill: parent }
-              VolumeSlider { host: root; anchors.fill: parent }
-              OsdPill { host: root; anchors.fill: parent }
-              ClipboardPill { host: root; anchors.fill: parent }
-              DevicePill { host: root; anchors.fill: parent }
-              WorkspacePill { host: root; anchors.fill: parent }
-              AddonPills { host: root; anchors.fill: parent }
-              RecordingPill { host: root; anchors.fill: parent }
-              MediaPill { id: mediaPillItem; host: root; shape: island; anchors.fill: parent }
-              DownloadPill { host: root; anchors.fill: parent }
-            }
-
-            GlanceBar {
-              id: glanceBar
-              host: root
-              shown: island.isGlanceExpanded
-              clockWidth: Math.max(clockLabel.width, clockLabel.advanceWidth || clockMetrics.advanceWidth)
-              anchors.fill: parent
-            }
-
-            IslandLabel { id: clockLabel; host: root; shape: island; pill: island.activePill; anchors.centerIn: parent }
-            TextMetrics { id: clockMetrics; font: clockLabel.font; text: Locale.I18n.tr(root.clockStacked ? root.clockWidestText : root.clockText) }
-
-            Views { id: views; host: root; anchors.fill: parent }
-          }
         }
-        AgentActivityBanner {
-          id: agentBanner
-          host: root
-          session: !window.hasScreensaver ? root.liveActivities.notice : null
-        }
+      }
+      Component.onCompleted: {
+        widthSpring.target = widthSpring.value = targetWidth
+        heightSpring.target = heightSpring.value = targetHeight
+      }
+      width: hideMotion.renderWidth
+      height: hideMotion.renderHeight
 
-        // Keep a faint light edge even at rest, so the black pill remains
-        // visible against a black wallpaper; brighten it while interacting.
+      MouseArea {
+        id: islandTap
+        anchors.fill: parent
+        enabled: !window.islandHidden && !agentBanner.shown && (root.view === "rest" || root.view === "feedback")
+        onPressed: squishHold.restart()
+        onClicked: function(mouse) {
+          feedbackTimer.stop()
+          if (island.activePill) island.activePill.clicked(mouse)
+          else if (root.view === "rest" && root.setup.needsSetup) root.setup.pillClicked()
+          else root.view = "controls"
+        }
+      }
+
+      // Fade the content before the silhouette becomes a dot.
+      Item {
+        anchors.fill: parent
+        opacity: hideMotion.contentOpacity
+        enabled: !window.islandHidden
+
+        // The live activities (see IslandPill); at most one is shown at a time.
         Item {
-          id: islandEdge
-          x: island.x
-          y: island.y
-          width: island.width
-          height: island.height
-          scale: island.scale
-          transformOrigin: island.transformOrigin
-          readonly property bool prominent: root.surfaceOpen || root.view === "feedback"
-          opacity: (prominent ? 1 : (island.lifted || island.isGlanceExpanded) ? 0.9 : 0.75) * island.opacity
-          visible: opacity > 0.01
-          Behavior on opacity { MotionAnimation { theme: root.theme; pace: islandEdge.prominent || island.lifted || island.isGlanceExpanded ? "morph" : "exit"; curve: "fade" } }
-          Shape {
-            anchors.fill: parent
-            anchors.margins: 0.5
-            preferredRendererType: Shape.CurveRenderer
-            ShapePath {
-              strokeWidth: 1
-              strokeColor: root.theme.outlineColor
-              fillColor: "transparent"
-              PathSvg { path: island.edgeOutline }
-            }
+          id: pills
+          anchors.fill: parent
+          readonly property Item active: {
+            for (var i = 0; i < children.length; i++) if (children[i].shown) return children[i]
+            return null
+          }
+          NotificationPill { host: root; shape: island; anchors.fill: parent }
+          VolumeSlider { host: root; anchors.fill: parent }
+          OsdPill { host: root; anchors.fill: parent }
+          ClipboardPill { host: root; anchors.fill: parent }
+          DevicePill { host: root; anchors.fill: parent }
+          WorkspacePill { host: root; anchors.fill: parent }
+          AddonPills { host: root; anchors.fill: parent }
+          RecordingPill { host: root; anchors.fill: parent }
+          MediaPill { id: mediaPillItem; host: root; shape: island; anchors.fill: parent }
+          DownloadPill { host: root; anchors.fill: parent }
+        }
+
+        Loader {
+          id: glanceLoader
+          active: root.hoverMode === "expand"
+          anchors.fill: parent
+          sourceComponent: GlanceBar {
+            host: root
+            shown: island.isGlanceExpanded
+            clockWidth: Math.max(clockLabel.width, clockLabel.advanceWidth || clockMetrics.advanceWidth)
           }
         }
 
+        IslandLabel { id: clockLabel; host: root; shape: island; pill: island.activePill; anchors.centerIn: parent }
+        TextMetrics { id: clockMetrics; font: clockLabel.font; text: Locale.I18n.tr(root.clockStacked ? root.clockWidestText : root.clockText) }
 
+        Views { id: views; host: root; anchors.fill: parent }
       }
+    }
+    AgentActivityBanner {
+      id: agentBanner
+      host: root
+      session: !root.screensaverActive ? root.liveActivities.notice : null
+    }
 
-      // The strip Hyprland keeps free for the resting island, so tiled windows
-      // start under it. Fixed, so views opening and the morph never move the
-      // windows; it goes while the island is hidden for good (bar off, or an
-      // auto-hide), not with edgeRevealed or an open view. A window of its own
-      // because the island's is full-screen with no exclusive zone. An island
-      // that follows the focused monitor reserves on all of them, or every
-      // change of focus would re-tile two monitors.
-      PanelWindow {
-        screen: window.screen
-        visible: (window.visible || !root.outputPinned) && root.settings.reserveSpace && !root.barHidden && !window.autoHideCondition && !root.manuallyHidden
-        color: "transparent"
-        anchors { top: true; left: true; right: true }
-        exclusionMode: ExclusionMode.Normal
-        exclusiveZone: (root.settings.notch ? 0 : 8) + root.clockHeight
-        implicitHeight: exclusiveZone
-        // Nothing to click: the island's own window is above it.
-        mask: Region {}
-        WlrLayershell.namespace: "omarchy-island-reserve"
-        WlrLayershell.layer: WlrLayer.Top
+    // Keep a faint light edge even at rest, so the black pill remains
+    // visible against a black wallpaper; brighten it while interacting.
+    Item {
+      id: islandEdge
+      x: island.x
+      y: island.y
+      width: island.width
+      height: island.height
+      scale: island.scale
+      transformOrigin: island.transformOrigin
+      readonly property bool prominent: root.surfaceOpen || root.view === "feedback"
+      opacity: (prominent ? 1 : (island.lifted || island.isGlanceExpanded) ? 0.9 : 0.75) * island.opacity
+      visible: opacity > 0.01
+      Behavior on opacity { MotionAnimation { theme: root.theme; pace: islandEdge.prominent || island.lifted || island.isGlanceExpanded ? "morph" : "exit"; curve: "fade" } }
+      Shape {
+        anchors.fill: parent
+        anchors.margins: 0.5
+        preferredRendererType: Shape.CurveRenderer
+        ShapePath {
+          strokeWidth: 1
+          strokeColor: root.theme.outlineColor
+          fillColor: "transparent"
+          PathSvg { path: island.edgeOutline }
+        }
       }
-    } }
+    }
+  }
+
+  // Independent exclusive strips keep tiling stable when focus moves. They
+  // contain no copy of the Island scene.
+  Variants {
+    model: Quickshell.screens
+    delegate: PanelWindow {
+      id: reserve
+      required property var modelData
+      screen: modelData
+      MonitorState { id: reserveState; screen: reserve.screen }
+      visible: (!root.outputPinned || screen === root.outputScreen) && root.settings.reserveSpace
+        && !root.barHidden && !reserveState.autoHideCondition && !root.manuallyHidden
+      color: "transparent"
+      anchors { top: true; left: true; right: true }
+      exclusionMode: ExclusionMode.Normal
+      exclusiveZone: (root.settings.notch ? 0 : 8) + root.clockHeight
+      implicitHeight: exclusiveZone
+      mask: Region {}
+      WlrLayershell.namespace: "omarchy-island-reserve"
+      WlrLayershell.layer: WlrLayer.Top
+    }
   }
 
   // A shadow under the island, there while a view is open.

@@ -1,6 +1,5 @@
 import QtQuick
 import "../i18n" as Locale
-import QtQuick.Window
 import Quickshell.Widgets
 
 // Dynamic Island–style notification pill: the notification's image or app
@@ -26,7 +25,7 @@ IslandPill {
   // screen; past that the body is still cut with "…". The island's own
   // failure banners always show in full, since they say what to do.
   readonly property bool fullText: host.settings.notificationFullText || !!row.islandFailure
-  readonly property real maxHeight: (Window.height > 0 ? Window.height : 1000) * 0.6
+  readonly property real maxHeight: host.screenHeight * 0.6
   pillHeight: fullText ? Math.min(maxHeight, Math.max(84, textColumn.height + 44) + actionsExtra) : 84 + actionsExtra
   // The island's own banners act on a click (see Island.qml's showBanner);
   // any other notification takes you to where it came from (and is dismissed).

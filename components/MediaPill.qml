@@ -24,7 +24,11 @@ IslandPill {
     anchors.verticalCenter: parent.verticalCenter
     width: 30; height: 30; radius: 8
     color: "transparent"
-    CoverArt { anchors.fill: parent; host: media.host; imageSize: 60 }
+    Loader {
+      anchors.fill: parent
+      active: media.visible
+      sourceComponent: CoverArt { host: media.host; imageSize: 60 }
+    }
   }
 
   SoundWave {

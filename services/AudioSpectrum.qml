@@ -4,12 +4,9 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// One cava process for every bar surface. Widgets read `levels` (0..1).
+// Share one capture process, only while an on-screen wave needs it.
 Item {
   id: root
-
-  property var shell: null
-  property var manifest: null
 
   readonly property string runtimeDir: {
     var dir = Quickshell.env("XDG_RUNTIME_DIR")
@@ -19,31 +16,35 @@ Item {
   }
   readonly property string configPath: runtimeDir + "/config"
 
-  property int bars: 10
-  property int framerate: 30
+  property bool wanted: false
+  readonly property int bars: 10
+  readonly property int framerate: 30
   property var levels: []
   property bool available: false
   property bool playing: false
   property string lastError: ""
-  property bool expectStop: false
+  property bool stopping: false
 
-
-  readonly property real silenceThreshold: 0.03
-
-  function clampInt(value, fallback, min, max) {
-    var n = Number(value)
-    if (!isFinite(n)) n = fallback
-    return Math.max(min, Math.min(max, Math.round(n)))
+  onWantedChanged: {
+    if (wanted) {
+      release.stop()
+      start()
+    } else {
+      backoff.stop()
+      if (cavaProc.running) release.restart()
+    }
   }
 
-  function applySettings(settings) {
-    var nextBars = clampInt(settings && settings.bars, bars, 4, 64)
-    var nextFps = clampInt(settings && settings.framerate, framerate, 10, 60)
-    if (nextBars === bars && nextFps === framerate && cavaProc.running)
-      return
-    bars = nextBars
-    framerate = nextFps
-    restart()
+  function start() {
+    if (wanted && !stopping && !backoff.running && !cavaProc.running)
+      cavaProc.running = true
+  }
+
+  function clear() {
+    silenceTimer.stop()
+    playing = false
+    available = false
+    levels = []
   }
 
   function configText() {
@@ -81,36 +82,20 @@ Item {
       if (!isFinite(n)) n = 0
       var level = Math.max(0, Math.min(1, n / 1000))
       next.push(level)
-      if (level >= silenceThreshold) loud = true
+      if (level >= 0.03) loud = true
     }
     if (next.length === 0) return
+    // Valid frames mark a recovered process and reset the retry delay.
+    if (!available) {
+      lastError = ""
+      backoff.interval = 1000
+      available = true
+    }
     levels = next
     if (loud) {
       playing = true
       silenceTimer.restart()
     }
-  }
-
-  function restart() {
-    restartTimer.restart()
-  }
-
-  function startCava() {
-    expectStop = cavaProc.running
-    if (cavaProc.running) cavaProc.running = false
-    writeConfig.command = [
-      "python3", "-c",
-      "import pathlib, sys; p = pathlib.Path(sys.argv[1]); p.parent.mkdir(parents=True, exist_ok=True); p.write_text(sys.argv[2])",
-      configPath,
-      configText()
-    ]
-    writeConfig.running = true
-  }
-
-  Component.onCompleted: startCava()
-  Component.onDestruction: {
-    expectStop = true
-    cavaProc.running = false
   }
 
   Timer {
@@ -119,55 +104,52 @@ Item {
     onTriggered: root.playing = false
   }
 
+  // Switching between surfaces or briefly pausing keeps the stream warm.
   Timer {
-    id: restartTimer
-    interval: 80
-    onTriggered: root.startCava()
+    id: release
+    interval: 900
+    onTriggered: {
+      if (root.wanted || !cavaProc.running) return
+      root.stopping = true
+      cavaProc.running = false
+      root.clear()
+    }
   }
 
   Timer {
     id: backoff
     interval: 1000
-    onTriggered: if (!cavaProc.running) root.startCava()
-  }
-
-  Process {
-    id: writeConfig
-    onExited: function(code) {
-      if (code !== 0) {
-        root.lastError = "failed to write cava config"
-        backoff.restart()
-        return
-      }
-      cavaProc.running = true
+    onTriggered: {
+      interval = Math.min(8000, interval * 2)
+      root.start()
     }
   }
 
   Process {
     id: cavaProc
-    command: ["cava", "-p", root.configPath]
+    command: ["sh", "-c",
+      'mkdir -p -- "$1" && printf "%s" "$3" > "$2" && exec cava -p "$2"',
+      "cava", root.runtimeDir, root.configPath, root.configText()]
     stdout: SplitParser {
-      onRead: function(line) { root.parseFrame(line) }
+      onRead: function(line) { if (!root.stopping) root.parseFrame(line) }
     }
     stderr: SplitParser {
       onRead: function(line) {
-        var text = String(line).replace(/^\s+|\s+$/g, "")
-        if (text.length) root.lastError = text
+        var text = String(line).trim()
+        if (text) root.lastError = text
       }
     }
-    onRunningChanged: if (running) {
-      root.available = true
-      backoff.interval = 1000
-    }
-    onExited: function() {
-      root.playing = false
-      if (root.expectStop) {
-        root.expectStop = false
-        return
+    onExited: function(code) {
+      var expected = root.stopping
+      root.stopping = false
+      root.clear()
+      if (!root.wanted) return
+      if (expected) {
+        Qt.callLater(root.start)
+      } else {
+        if (!root.lastError) root.lastError = "cava exited (" + code + ")"
+        backoff.start()
       }
-      root.available = false
-      backoff.interval = Math.min(8000, Math.max(1000, backoff.interval * 2))
-      backoff.restart()
     }
   }
 }

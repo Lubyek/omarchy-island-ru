@@ -73,7 +73,6 @@ ColumnLayout {
       if (cc.active) cc.controls.refresh()
     }
   }
-  Component.onCompleted: controls.refresh()
 
   // The island's width follows the columns showing (all of them while
   // editing, else the ones with a zone in them), within a share of the

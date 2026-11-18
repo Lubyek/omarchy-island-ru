@@ -114,7 +114,7 @@ install -Dm644 ~/.config/omarchy/plugins/huesos.island/companion/opencode-island
 omarchy-shell huesos.island audioStatus
 ```
 
-При работающем звуке `available` должен быть `true`, а значения массива `levels` — меняться.
+Включите музыку и откройте плеер Island. Когда CAVA начнёт отдавать спектр, `available` станет `true`, а значения в `levels` будут меняться в такт звуку. Когда спектр скрыт или воспроизведение остановлено, Island завершает CAVA после короткой паузы.
 
 ## Обновление
 

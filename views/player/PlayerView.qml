@@ -23,6 +23,7 @@ Item {
   readonly property bool canSeek: !!(mpris && mpris.canSeek && length > 0)
   property real position: 0
   property bool dragging: false
+  property bool completingAction: false
 
   readonly property bool nativeShuffle: !!(mpris && mpris.canControl && mpris.shuffleSupported)
   readonly property bool canShuffle: nativeShuffle || !!youtube.canShuffle
@@ -70,7 +71,9 @@ Item {
     stdout: StdioCollector {
       onStreamFinished: {
         if (youtubeAction.action !== "open") return
-        try { if (JSON.parse(text).ok) return }
+        try {
+          if (JSON.parse(text).ok) { player.completingAction = false; return }
+        }
         catch (_) {}
         focusTimer.restart()
       }
@@ -133,11 +136,9 @@ Item {
     position = mpris ? mpris.position : 0
     Qt.callLater(function() { player.forceActiveFocus() })
   }
-  // Mpris only reports position on seeks; re-read it while open and playing
-  // so the bar and times glide. 30 Hz is smooth for a bar that moves a pixel
-  // or two a second, without redrawing the island every display frame.
+  // Re-read MPRIS position while playing between seek notifications.
   Timer {
-    interval: 33
+    interval: player.length > 45 ? 120 : 33
     repeat: true
     running: player.active && player.playing && !player.dragging
     onTriggered: player.position = player.mpris ? player.mpris.position : 0
@@ -160,6 +161,7 @@ Item {
   // after the island's layer has let go of it. Window, else the player's own
   // Raise.
   function openApp() {
+    completingAction = true
     focusTimer.win = appWindow
     focusTimer.address = appWindowAddress
     host.view = "rest"
@@ -181,6 +183,7 @@ Item {
       } else {
         win.activate()
       }
+      player.completingAction = false
     }
   }
   function seekTo(seconds) {

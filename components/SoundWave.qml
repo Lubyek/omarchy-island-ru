@@ -7,8 +7,7 @@ Row {
   property color color: "white"
   property bool playing: false
   property var spectrum: null
-  readonly property var levels: spectrum && spectrum.available ? spectrum.levels : []
-  readonly property bool reacting: playing && !!spectrum && spectrum.available && spectrum.playing
+  readonly property var levels: visible && playing && spectrum?.playing ? spectrum.levels : null
   property int bars: 5
   property real barWidth: 3
   property real maxHeight: 18
@@ -16,15 +15,13 @@ Row {
   spacing: barWidth
 
   function levelAt(index) {
-    if (!reacting || !levels.length || bars <= 0) return 0
+    if (!levels?.length || bars <= 0) return 0
     // RMS preserves a beat in a narrow band without exaggerating quiet bins.
     var start = Math.floor(index * levels.length / bars)
     var end = Math.max(start + 1, Math.floor((index + 1) * levels.length / bars))
     var power = 0, count = 0
     for (var i = start; i < Math.min(end, levels.length); i++) {
-      var level = Number(levels[i])
-      if (!isFinite(level)) level = 0
-      level = Math.max(0, Math.min(1, level))
+      var level = levels[i]
       power += level * level
       count++
     }
@@ -34,6 +31,9 @@ Row {
   Repeater {
     id: repeater
     model: wave.bars + 2
+    onItemAdded: function(index, item) {
+      if (!item.dot) wave.updateTargets()
+    }
     delegate: Rectangle {
       required property int index
       objectName: "islandAudioBar_" + index
@@ -49,34 +49,40 @@ Row {
     }
   }
 
-  property real lastTick: 0
-  property bool settling: true
-  onPlayingChanged: settling = true
-  onReactingChanged: settling = true
-  onLevelsChanged: settling = true
-  // 30 Hz: the bars ease toward their targets by elapsed time, so this looks
-  // the same as every frame at half the redraws.
-  Timer {
-    interval: 33
-    repeat: true
-    running: wave.visible && (wave.settling || wave.reacting)
-    onRunningChanged: wave.lastTick = Date.now()
+  onLevelsChanged: updateTargets()
+  onVisibleChanged: updateTargets()
+  function updateTargets() {
+    var moving = false
+    for (var i = 1; i <= bars; i++) {
+      var bar = repeater.itemAt(i)
+      if (!bar) continue
+      bar.target = levelAt(i - 1)
+      if (!visible) bar.level = 0
+      else if (Math.abs(bar.target - bar.level) >= 0.002) moving = true
+      else bar.level = bar.target
+    }
+    pulse.running = moving
+  }
+
+  // Calculate the band energy only for a new input sample. Interpolate at
+  // the display refresh rate while the bars move, then stop at silence.
+  FrameAnimation {
+    id: pulse
     onTriggered: {
-      var now = Date.now()
-      var elapsed = Math.min(64, Math.max(0, now - wave.lastTick))
-      wave.lastTick = now
+      var elapsed = Math.min(0.064, frameTime)
+      var attack = 1 - Math.exp(-elapsed / 0.035)
+      var release = 1 - Math.exp(-elapsed / 0.100)
       var moving = false
       for (var i = 1; i <= wave.bars; i++) {
         var bar = repeater.itemAt(i)
         if (!bar) continue
-        bar.target = wave.levelAt(i - 1)
-        // Fast attack follows transients; a softer release avoids flicker.
-        var response = 1 - Math.exp(-elapsed / (bar.target > bar.level ? 35 : 100))
-        bar.level += (bar.target - bar.level) * response
-        if (Math.abs(bar.target - bar.level) < 0.002) bar.level = bar.target
+        var delta = bar.target - bar.level
+        var next = bar.level + delta * (delta > 0 ? attack : release)
+        if (Math.abs(bar.target - next) < 0.002) next = bar.target
         else moving = true
+        bar.level = next
       }
-      wave.settling = moving
+      if (!moving) stop()
     }
   }
 }
