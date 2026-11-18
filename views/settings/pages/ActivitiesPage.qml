@@ -3,6 +3,7 @@ import QtQuick
 import "../../../i18n" as Locale
 import QtQuick.Layouts
 import "../controls"
+import "../../../components"
 
 // Settings → Live Activities: checkable static previews of the real pill.
 ColumnLayout {
@@ -11,6 +12,104 @@ ColumnLayout {
   visible: view.currentPage === "Live Activities"
   Layout.fillWidth: true
   spacing: 20
+
+  readonly property var live: view.host.liveActivities
+  readonly property bool customPriority: live.indicatorOrder.join(",") !== live.defaultIndicatorOrder.join(",")
+
+  component PriorityButton: SettingsButton {
+    id: priorityButton
+    required property string action
+    required property string activity
+    implicitWidth: implicitHeight
+    radius: height / 2
+    opacity: enabled ? 1 : 0.35
+    activeFocusOnTab: enabled
+    border.width: activeFocus ? 1 : 0
+    border.color: view.accent
+    Accessible.role: Accessible.Button
+    Accessible.name: Locale.I18n.tr(action) + " · " + Locale.I18n.tr(activity)
+    Accessible.onPressAction: if (enabled) clicked()
+    Keys.onSpacePressed: clicked()
+    Keys.onReturnPressed: clicked()
+    Tooltip { theme: priorityButton.view.host.theme; text: priorityButton.action }
+  }
+
+  KeyedListModel {
+    id: priorityRows
+    keyOf: indicator => indicator.id
+    values: page.visible ? page.live.indicatorOrder.map(id => page.live.indicatorTypes.find(indicator => indicator.id === id)) : []
+  }
+
+  SettingsGroup {
+    view: page.view
+    title: "Indicator Priority"
+    footer: "The highest active indicator appears on the collapsed Island. Media without a known type uses the music priority."
+    ListView {
+      id: priorityList
+      readonly property real rowHeight: Math.max(44, page.view.detailFontSize * 2 + 18)
+      Layout.fillWidth: true
+      Layout.preferredHeight: count * rowHeight
+      interactive: false
+      clip: true
+      model: priorityRows.model
+      move: Transition {
+        MotionAnimation { theme: page.view.host.theme; property: "y"; pace: "quick" }
+      }
+      moveDisplaced: Transition {
+        MotionAnimation { theme: page.view.host.theme; property: "y"; pace: "quick" }
+      }
+      delegate: SettingsRow {
+        id: priorityRow
+        required property int index
+        required property var entry
+        view: page.view
+        width: priorityList.width
+        height: priorityList.rowHeight
+        label: entry.label
+        icon: entry.icon
+        iconTint: entry.color
+        RowLayout {
+          width: implicitWidth
+          height: implicitHeight
+          spacing: 6
+          PriorityButton {
+            view: page.view
+            label: "↑"
+            action: "Move up"
+            activity: priorityRow.label
+            enabled: priorityRow.index > 0
+            onClicked: page.live.moveIndicator(priorityRow.entry.id, -1)
+          }
+          PriorityButton {
+            view: page.view
+            label: "↓"
+            action: "Move down"
+            activity: priorityRow.label
+            enabled: priorityRow.index < priorityList.count - 1
+            onClicked: page.live.moveIndicator(priorityRow.entry.id, 1)
+          }
+        }
+      }
+    }
+    SettingsRow {
+      view: page.view
+      label: "Default Indicator Order"
+      last: true
+      SettingsButton {
+        view: page.view
+        label: "Reset"
+        enabled: page.customPriority
+        opacity: enabled ? 1 : 0.35
+        activeFocusOnTab: enabled
+        Accessible.role: Accessible.Button
+        Accessible.name: Locale.I18n.tr("Default Indicator Order")
+        Accessible.onPressAction: if (enabled) clicked()
+        Keys.onSpacePressed: clicked()
+        Keys.onReturnPressed: clicked()
+        onClicked: page.live.resetIndicatorOrder()
+      }
+    }
+  }
 
   readonly property var activities: [
     { kind: "media", key: "mediaPill", title: "Now Playing", description: "Track details and album artwork" },

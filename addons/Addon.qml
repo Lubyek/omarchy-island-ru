@@ -9,11 +9,11 @@ import QtQuick
 //           rounded to pillRadius when set (for a pill grown too tall to
 //           stay a capsule). Show it with
 //           host.showFeedback("", ms, "addon:" + addon.id), or hold the
-//           resting island with it for as long as `ongoing` is set (over
-//           the media and download pills), the clock kept in its middle.
+//           resting island while `ongoing` has priority. It keeps the clock
+//           in its middle.
 //           With `pillAsks` set too, the pill is a question waiting for
 //           an answer (Displays' "Keep these display settings?"): it goes
-//           ahead of the other addons' ongoing pills and fills the island,
+//           ahead of ongoing indicators and fills the island,
 //           the clock hidden.
 //   views   [{ name, width, padding, component }], each opened with
 //           `show <name>`; its item is on screen while host.view is name.

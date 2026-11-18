@@ -45,6 +45,8 @@ Item {
       property bool capsuleMedia: false
       property bool capsulePlugins: false
       property bool mediaPill: true
+      // Highest first, across the ongoing indicators (see ActivityPriority.mjs).
+      property string indicatorOrder: ""
       property bool volumeHud: true
       property bool brightnessHud: true
       property int bannerSeconds: 5

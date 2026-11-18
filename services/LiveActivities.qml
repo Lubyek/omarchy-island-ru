@@ -1,5 +1,6 @@
 import QtQuick
 import "../i18n" as Locale
+import "ActivityPriority.mjs" as Priority
 
 Item {
   id: live
@@ -11,6 +12,19 @@ Item {
   readonly property var recorder: host.recorder
   readonly property var downloads: host.downloads
   readonly property var packages: host.packages
+
+  readonly property var indicatorOrder: Priority.normalizeOrder(host.settings.indicatorOrder,
+    host.addons.option("agents", "prioritizeMedia") === false)
+  readonly property var defaultIndicatorOrder: Priority.defaultOrder
+  readonly property var indicatorTypes: Priority.indicators
+
+  function moveIndicator(id, offset) {
+    var next = Priority.moveIndicator(indicatorOrder, id, offset)
+    if (next !== indicatorOrder) host.settings.indicatorOrder = next.join(",")
+  }
+  function resetIndicatorOrder() {
+    host.settings.indicatorOrder = defaultIndicatorOrder.join(",")
+  }
 
   readonly property string mediaKey: media.player && (media.playing || media.title)
     ? "media:" + JSON.stringify([media.player.dbusName || "", media.title, media.artist]) : ""

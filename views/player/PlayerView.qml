@@ -33,9 +33,9 @@ Item {
   // Electron apps and sites installed as apps can all go by the engine's name
   // on MPRIS, which says nothing about which of them is playing.
   function engineName(name) { return /^(chromium|chrome|electron)$/i.test(String(name || "")) }
-  readonly property bool chromium: !!(mpris && /^org\.mpris\.MediaPlayer2\.chromium(?:\.instance\d+)?$/.test(mpris.dbusName))
+  readonly property bool chromium: host.nowPlaying.chromium
   readonly property string trackTitle: mpris ? String(mpris.trackTitle || "") : ""
-  readonly property string bridgePath: decodeURIComponent(String(Qt.resolvedUrl("../../browser/bridge.py")).replace(/^file:\/\//, ""))
+  readonly property string bridgePath: host.nowPlaying.browserBridge
   property string youtubeTitle: ""
   property var youtubeStatus: ({})
   readonly property var youtube: chromium && youtubeTitle === trackTitle ? youtubeStatus : ({})

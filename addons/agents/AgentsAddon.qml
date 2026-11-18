@@ -15,7 +15,7 @@ import ".."
 Addon {
   id: agentsAddon
   pill: Component { AgentsPill { agents: agentsAddon } }
-  ongoing: !!live && (addon.option("prioritizeMedia") !== false || !host.mediaAvailable)
+  ongoing: !!live
   pillWidth: 172
   readonly property var live: host.liveActivities?.activeAgents[0] || null
   readonly property color ink: live ? host.agentTint(live) : host.theme.accent

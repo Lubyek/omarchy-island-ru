@@ -47,7 +47,7 @@ Item {
     if (query === "") return true
     var terms = {
       "General": "general time format 12-hour clock style hide automatically appearance display shape island style dynamic island colorful sidebar icons colorful live activities theme accent neutral motion animation speed pill notch style 24-hour clock am pm format date day weekday font typography text size custom autohide hide fullscreen tiling tile omarchy menu search apps applications",
-      "Live Activities": "live activities now playing media cover sound wave play pause playback track clipboard downloads screen recording record system updates battery charging low bluetooth devices network wifi ethernet volume brightness hud osd workspace workspaces indicator",
+      "Live Activities": "live activities now playing media cover sound wave play pause playback track clipboard downloads screen recording record system updates battery charging low bluetooth devices network wifi ethernet volume brightness hud osd workspace workspaces indicator priority order timer agents music video",
       "Notifications": "notifications banner duration stack stacked group buttons actions",
       "Network": "network wifi wi-fi ethernet vpn wireguard openvpn connection connections ip address dns dhcp router gateway hostname password hidden forget networkmanager nmtui",
       "Addons": "addons extensions extras store cart add remove " + host.addons.entries.map(function(addon) {
@@ -59,7 +59,7 @@ Item {
     if (addonPage) terms[page] = page + " " + (addonPage.search || "")
     var russian = {
       "General": "язык русский английский интерфейс основные часы время дата шрифт размер текст фон тема оформление анимация скорость скрытие полноэкранный наведение островок меню поиск приложения",
-      "Live Activities": "активности музыка плеер воспроизведение буфер обмена загрузки запись экран обновления батарея зарядка устройства сеть громкость яркость рабочий стол",
+      "Live Activities": "активности музыка плеер воспроизведение буфер обмена загрузки запись экран обновления батарея зарядка устройства сеть громкость яркость рабочий стол индикатор индикаторы приоритет порядок таймер агенты видео",
       "Notifications": "уведомления баннеры длительность группировка кнопки сообщения",
       "Network": "сеть подключение вайфай интернет пароль адрес маршрутизатор имя компьютера впн",
       "Addons": "дополнения расширения плагины календарь погода таймер агенты",

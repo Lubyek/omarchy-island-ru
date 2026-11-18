@@ -12,6 +12,7 @@ import Quickshell.Wayland
 import "addons"
 import "components"
 import "services"
+import "services/ActivityPriority.mjs" as Priority
 import "views"
 import "components/Squircle.js" as Squircle
 // Omarchy's own OSD payload model, so what the island shows matches it.
@@ -26,22 +27,31 @@ Item {
   property var barConfig: ({})
   property string omarchyPath: ""
 
-  // The resting island's pills, highest first: a screen recording, an
-  // addon's ongoing activity (see addonPill), a download or system update,
-  // then the media playing. None shows while the companion needs setting up.
   readonly property bool resting: view === "rest" && !setup.needsSetup
-  readonly property bool recordingPill: resting && settings.screenRecordingActivity && recorder.active
+  readonly property bool recordingAvailable: settings.screenRecordingActivity && recorder.active
     && !liveActivities.isHidden("recording")
-  readonly property bool restingFree: resting && !recordingPill && !addons.ongoing
-  readonly property bool visibleFileActivity: !liveActivities.isHidden("downloads") && (downloads.active || downloads.finishedName !== "")
-  readonly property bool visibleUpdateActivity: !liveActivities.isHidden("updates") && (packages.active || packages.finishedTitle !== "")
-  readonly property bool downloadDone: restingFree && (visibleFileActivity ? downloads.finishedName !== ""
-    : visibleUpdateActivity && packages.finishedTitle !== "")
-  readonly property bool downloadActive: restingFree && (visibleFileActivity || visibleUpdateActivity) && !downloadDone
-  readonly property bool downloadPill: downloadDone || downloadActive
+  readonly property bool visibleFileActivity: settings.downloads && !liveActivities.isHidden("downloads")
+    && (downloads.active || downloads.finishedName !== "")
+  readonly property bool visibleUpdateActivity: settings.systemUpdates && !liveActivities.isHidden("updates")
+    && (packages.active || packages.finishedTitle !== "")
   readonly property bool mediaAvailable: nowPlaying.playing && settings.mediaPill
     && !liveActivities.isHidden(liveActivities.mediaKey)
-  readonly property bool mediaPill: restingFree && !downloadPill && mediaAvailable
+
+  readonly property string restingIndicator: {
+    if (!resting) return ""
+    var ongoing = addons.ongoingPills
+    var confirmation = ongoing.find(addon => addon.pillAsks)
+    var available = ongoing.map(addon => addon.addon.id)
+    if (recordingAvailable) available.push("recording")
+    if (visibleFileActivity) available.push("downloads")
+    if (visibleUpdateActivity) available.push("updates")
+    if (mediaAvailable) available.push(nowPlaying.kind)
+    return Priority.selectIndicator(liveActivities.indicatorOrder, available, confirmation?.addon.id)
+  }
+  readonly property bool recordingPill: restingIndicator === "recording"
+  readonly property bool downloadPill: restingIndicator === "downloads" || restingIndicator === "updates"
+  readonly property bool mediaPill: restingIndicator === "video" || restingIndicator === "music"
+  readonly property bool glanceAllowed: resting && (restingIndicator === "" || mediaPill)
   // The live-activity pills' height, and the resting clock's.
   readonly property real pillHeight: settings.notch ? 40 : 44
   readonly property real clockHeight: clockStacked ? (settings.notch ? 40 : 42) : (settings.notch ? 36 : 40)
@@ -62,10 +72,6 @@ Item {
   PackageUpdateTracker { id: packageTracker; enabled: root.settings.systemUpdates }
   Process { id: downloadOpener }
   function openDownloads() {
-    if (!visibleFileActivity) {
-      packages.dismissFinished()
-      return
-    }
     var path = downloads.finishedName !== "" ? downloads.finishedPath : downloads.folder
     downloads.dismissFinished()
     downloadOpener.command = ["sh", "-c", '[ -e "$1" ] && exec xdg-open "$1"; exec xdg-open "$(dirname "$1")"', "sh", path]
@@ -168,7 +174,7 @@ Item {
   // The addon whose pill is on the island, if any (see addons/Addon.qml):
   // the one shown for a moment, or at rest an ongoing one's.
   readonly property var addonPill: view === "feedback" ? addons.pillFor(feedbackKind)
-    : resting && !recordingPill ? addons.ongoing : null
+    : addons.ongoingPills.find(addon => addon.addon.id === restingIndicator) || null
 
   // ---------- Workspace switches ----------
 
@@ -559,6 +565,7 @@ Item {
         timer: timer ? timer.phase : "disabled", agents: root.agentSessions.map(function(s) {
           return {id: s.id, name: s.name, provider: s.provider, state: s.state, startedAt: s.startedAt, doneAt: s.doneAt}
         }), primary: root.addonPill?.addon.id || (root.mediaPill ? "media" : ""),
+        indicator: root.restingIndicator, mediaKind: root.nowPlaying.kind,
         hidden: root.liveActivities.hiddenEntries.length,
         completion: notice && notice.noticeKind !== "asking" ? notice.name : "",
         question: notice?.noticeKind === "asking" ? notice.name : ""})
@@ -872,7 +879,7 @@ Item {
       onGlanceHoveredChanged: {
         if (glanceHovered) {
           glanceLeaveTimer.stop()
-          if (root.hoverMode === "expand" && island.hasGlanceItems && root.restingFree && !root.downloadPill && !island.hasNonMediaActivePill) island.glanceActive = true
+          if (root.hoverMode === "expand" && island.hasGlanceItems && root.glanceAllowed) island.glanceActive = true
         } else {
           glanceLeaveTimer.restart()
         }
@@ -914,8 +921,7 @@ Item {
           }
         }
       }
-      readonly property bool hasNonMediaActivePill: pills.active !== null && pills.active !== mediaPillItem
-      readonly property bool isGlanceExpanded: island.glanceActive && (root.hoverMode === "expand") && island.hasGlanceItems && root.restingFree && !root.downloadPill && !island.hasNonMediaActivePill
+      readonly property bool isGlanceExpanded: island.glanceActive && (root.hoverMode === "expand") && island.hasGlanceItems && root.glanceAllowed
       readonly property bool capsulesShown: island.capsulesActive && (root.hoverMode === "capsules") && (root.resting || root.volumePill)
       // How much wider than a bare time the chosen clock format is; the
       // resting pill and the pills that keep the clock in the middle grow by it.
