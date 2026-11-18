@@ -613,14 +613,14 @@ Item {
           target: window.manuallyHiddenAtRest ? 100 : 0
         }
 
-        component EdgeHold: TapHandler {
+        component EdgeHold: MouseArea {
           required property bool revealing
-          acceptedDevices: PointerDevice.Mouse
+          anchors.fill: parent
+          z: 10
           acceptedButtons: Qt.RightButton
-          gesturePolicy: TapHandler.DragThreshold
-          longPressThreshold: 0.4
+          pressAndHoldInterval: 400
 
-          onLongPressed: {
+          onPressAndHold: {
             if (revealing && window.isEffectivelyHidden) {
               window.edgeRevealed = true
               edgeLeaveTimer.restart()
