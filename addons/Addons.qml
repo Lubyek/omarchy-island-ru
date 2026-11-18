@@ -79,6 +79,12 @@ Item {
         { circle: true, color: "#ffffff", x: 0.5, y: 0.56, size: 0.1 }
       ],
       description: "A countdown on the island" },
+    { id: "todos", name: "Priority Todos", icon: "󰄳", color: "#0a84ff", default: false, source: "todos/TodosAddon.qml",
+      searchAliases: ["tasks", "todo", "задачи", "домашка", "дз"],
+      description: "Organize your tasks by status and priority",
+      options: [{ key: "reminderMinutes", label: "Task reminders", type: "popup", default: 60,
+        choices: [{ label: "Off", value: 0 }, { label: "30 min", value: 30 },
+          { label: "1 hour", value: 60 }, { label: "2 hours", value: 120 }] }] },
     { id: "stats", name: "System Stats", icon: "󰓅", color: "#232325", default: true, source: "stats/StatsAddon.qml",
       searchAliases: ["activity monitor", "system monitor", "монитор системы"],
       zone: { minWidth: 300 },

@@ -2,6 +2,8 @@
 
 Island RU is a fork of [Island by Guilhermerisu](https://github.com/Guilhermerisu/island). The original MIT license is preserved in LICENSE.
 
+`addons/todos/Todos.js` adapts the task model and storage format from [Priority Todos by Dejan Vitasovic](https://github.com/dejan994/omarchy-priority-todos). Its MIT license is preserved in `addons/todos/LICENSE`.
+
 services/AudioSpectrum.qml adapts the CAVA service from [omarchy-cava-widget by Dave Brown](https://github.com/twodogsdave/omarchy-cava-widget). Its MIT license follows.
 
 ```text
