@@ -601,10 +601,9 @@ Item {
         )
 
         property bool edgeRevealed: false
-        property bool edgeDragActive: false
         readonly property bool manuallyHiddenAtRest: root.manuallyHidden && root.view === "rest"
-        readonly property bool edgeDragAllowed: visible && !hasScreensaver && root.view === "rest"
-        readonly property bool dragRevealArmed: edgeDragAllowed && root.manuallyHidden
+        readonly property bool edgeHoldAllowed: visible && !hasScreensaver && root.view === "rest"
+        readonly property bool holdRevealArmed: edgeHoldAllowed && root.manuallyHidden
 
         MotionSpring {
           id: manualMotion
@@ -614,59 +613,31 @@ Item {
           target: window.manuallyHiddenAtRest ? 100 : 0
         }
 
-        // Use scene coordinates so the shrinking pill never moves the drag origin.
-        component EdgeDrag: DragHandler {
-          id: gesture
+        component EdgeHold: TapHandler {
           required property bool revealing
-          property real pressY: 0
-          property real startProgress: 0
-          readonly property real revealDistance: 44
-          target: null
           acceptedDevices: PointerDevice.Mouse
-          acceptedButtons: Qt.LeftButton
-          xAxis.enabled: false
-          dragThreshold: 4
+          acceptedButtons: Qt.RightButton
+          gesturePolicy: TapHandler.DragThreshold
+          longPressThreshold: 0.4
 
-          function follow(pointerY) {
-            const distance = revealing ? revealDistance : Math.max(pressY, 4)
-            const progress = startProgress + 100 * (pressY - pointerY) / distance
-            manualMotion.value = Math.max(0, Math.min(100, progress))
-          }
-
-          onActiveTranslationChanged: if (active && window.edgeDragActive) follow(centroid.scenePosition.y)
-          onGrabChanged: function(transition, point) {
-            if (transition === PointerDevice.GrabExclusive) {
-              pressY = point.scenePressPosition.y
-              startProgress = Math.max(0, Math.min(100, manualMotion.value))
-              manualMotion.stop()
-              manualMotion.velocity = 0
-              window.edgeDragActive = true
-              edgeLeaveTimer.stop()
+          onLongPressed: {
+            if (revealing && window.isEffectivelyHidden) {
+              window.edgeRevealed = true
+              edgeLeaveTimer.restart()
+            }
+            if (!revealing) {
               island.glanceActive = false
               island.capsulesActive = false
               capsulesEnterTimer.stop()
-              follow(point.scenePosition.y)
-            } else if (transition === PointerDevice.UngrabExclusive || transition === PointerDevice.CancelGrabExclusive) {
-              window.edgeDragActive = false
-              if (transition === PointerDevice.UngrabExclusive && window.edgeDragAllowed) {
-                const releaseY = point.scenePosition.y
-                if (revealing && releaseY - pressY >= revealDistance / 2) {
-                  if (window.isEffectivelyHidden) window.edgeRevealed = true
-                  root.manuallyHidden = false
-                } else if (!revealing && releaseY <= 4) {
-                  root.manuallyHidden = true
-                }
-              }
-              if (window.edgeRevealed) edgeLeaveTimer.restart()
-              if (manualMotion.value !== manualMotion.target) manualMotion.start()
             }
+            root.manuallyHidden = !revealing
           }
         }
 
         Timer {
           id: edgeLeaveTimer
           interval: 400
-          onTriggered: if (!window.edgeDragActive && !revealHover.hovered && !bridgeHover.hovered && !islandPointerHover.hovered)
+          onTriggered: if (!revealHover.hovered && !bridgeHover.hovered && !islandPointerHover.hovered)
             window.edgeRevealed = false
         }
 
@@ -689,7 +660,7 @@ Item {
         mask: Region {
           item: root.closesOnOutsideClick ? outsideArea : window.islandHidden ? null : island
           regions: [
-            Region { item: window.dragRevealArmed ? dragRevealStrip : null },
+            Region { item: window.holdRevealArmed ? holdRevealStrip : null },
             Region { item: window.revealArmed ? revealStrip : null },
             Region { item: window.revealArmed && window.edgeRevealed ? revealBridge : null },
             Region { item: satellitePill && satellitePill.shown && satellitePill.visible ? satellitePill : null },
@@ -709,13 +680,13 @@ Item {
         }
 
         Item {
-          id: dragRevealStrip
+          id: holdRevealStrip
           anchors.top: parent.top
           anchors.horizontalCenter: parent.horizontalCenter
           width: Math.max(100, Math.min(280, island.targetWidth))
           height: 6
-          visible: window.dragRevealArmed
-          EdgeDrag { revealing: true; enabled: window.dragRevealArmed }
+          visible: window.holdRevealArmed
+          EdgeHold { revealing: true; enabled: window.holdRevealArmed }
         }
 
         Item {
@@ -773,7 +744,7 @@ Item {
           id: hoverCapsules
           host: root
           island: island
-          shown: (root.hoverMode === "capsules") && island.capsulesShown && !window.islandHidden && !window.edgeDragActive
+          shown: (root.hoverMode === "capsules") && island.capsulesShown && !window.islandHidden
           anchors.fill: parent
           // Under the island, so the capsules can start tucked beneath it.
           z: -1
@@ -895,14 +866,13 @@ Item {
           scale: root.settings.notch ? 1.0 : (1 + liftSpring.value * 0.00018 - pressSpring.value * 0.0003)
           // With the notch the island hangs from the top edge, so it scales from there.
           transformOrigin: root.settings.notch ? Item.Top : Item.Center
-          EdgeDrag {
+          EdgeHold {
             revealing: false
-            enabled: window.edgeDragAllowed && !window.islandHidden
+            enabled: window.edgeHoldAllowed && !window.islandHidden
           }
-          HoverHandler { id: clockHover; enabled: root.view === "rest" && !window.edgeDragActive }
+          HoverHandler { id: clockHover; enabled: root.view === "rest" }
           HoverHandler {
             id: islandPointerHover
-            enabled: !window.edgeDragActive
             onHoveredChanged: {
               if (hovered) {
                 edgeLeaveTimer.stop()
@@ -1056,7 +1026,7 @@ Item {
           id: satellitePill
           host: root
           shape: island
-          visible: opacity > 0.01 && hideMotion.contentOpacity > 0.95 && !window.islandHidden && !window.edgeDragActive
+          visible: opacity > 0.01 && hideMotion.contentOpacity > 0.95 && !window.islandHidden
           hasMediaInGlance: glanceBar ? (glanceBar.left1Kind === "media" || glanceBar.left2Kind === "media"
             || glanceBar.right1Kind === "media" || glanceBar.right2Kind === "media") : false
         }
