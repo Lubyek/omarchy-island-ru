@@ -544,6 +544,7 @@ Item {
   // An open view closes on a click outside the island (see outsideArea),
   // armed a moment after it opens so the click that opened it can't count.
   property bool outsideClickArmed: false
+  property bool manuallyHidden: false
   readonly property bool closesOnOutsideClick: surfaceOpen && outsideClickArmed
   Timer {
     interval: 120
@@ -600,10 +601,72 @@ Item {
         )
 
         property bool edgeRevealed: false
+        property bool edgeDragActive: false
+        readonly property bool manuallyHiddenAtRest: root.manuallyHidden && root.view === "rest"
+        readonly property bool edgeDragAllowed: visible && !hasScreensaver && root.view === "rest"
+        readonly property bool dragRevealArmed: edgeDragAllowed && root.manuallyHidden
+
+        MotionSpring {
+          id: manualMotion
+          theme: root.theme
+          pace: root.manuallyHidden ? "collapse" : "expressive"
+          bounce: root.manuallyHidden ? 0 : 0.27
+          target: window.manuallyHiddenAtRest ? 100 : 0
+        }
+
+        // Use scene coordinates so the shrinking pill never moves the drag origin.
+        component EdgeDrag: DragHandler {
+          id: gesture
+          required property bool revealing
+          property real pressY: 0
+          property real startProgress: 0
+          readonly property real revealDistance: 44
+          target: null
+          acceptedDevices: PointerDevice.Mouse
+          acceptedButtons: Qt.LeftButton
+          xAxis.enabled: false
+          dragThreshold: 4
+
+          function follow(pointerY) {
+            const distance = revealing ? revealDistance : Math.max(pressY, 4)
+            const progress = startProgress + 100 * (pressY - pointerY) / distance
+            manualMotion.value = Math.max(0, Math.min(100, progress))
+          }
+
+          onActiveTranslationChanged: if (active && window.edgeDragActive) follow(centroid.scenePosition.y)
+          onGrabChanged: function(transition, point) {
+            if (transition === PointerDevice.GrabExclusive) {
+              pressY = point.scenePressPosition.y
+              startProgress = Math.max(0, Math.min(100, manualMotion.value))
+              manualMotion.stop()
+              manualMotion.velocity = 0
+              window.edgeDragActive = true
+              edgeLeaveTimer.stop()
+              island.glanceActive = false
+              island.capsulesActive = false
+              capsulesEnterTimer.stop()
+              follow(point.scenePosition.y)
+            } else if (transition === PointerDevice.UngrabExclusive || transition === PointerDevice.CancelGrabExclusive) {
+              window.edgeDragActive = false
+              if (transition === PointerDevice.UngrabExclusive && window.edgeDragAllowed) {
+                const releaseY = point.scenePosition.y
+                if (revealing && releaseY - pressY >= revealDistance / 2) {
+                  if (window.isEffectivelyHidden) window.edgeRevealed = true
+                  root.manuallyHidden = false
+                } else if (!revealing && releaseY <= 4) {
+                  root.manuallyHidden = true
+                }
+              }
+              if (window.edgeRevealed) edgeLeaveTimer.restart()
+              if (manualMotion.value !== manualMotion.target) manualMotion.start()
+            }
+          }
+        }
+
         Timer {
           id: edgeLeaveTimer
           interval: 400
-          onTriggered: if (!revealHover.hovered && !bridgeHover.hovered && !islandPointerHover.hovered)
+          onTriggered: if (!window.edgeDragActive && !revealHover.hovered && !bridgeHover.hovered && !islandPointerHover.hovered)
             window.edgeRevealed = false
         }
 
@@ -615,10 +678,10 @@ Item {
         }
 
         // Hover at the top edge can bring a hidden island back.
-        readonly property bool revealArmed: isEffectivelyHidden && !hasScreensaver
+        readonly property bool revealArmed: isEffectivelyHidden && !hasScreensaver && !root.manuallyHidden
 
-        readonly property bool islandHidden: isEffectivelyHidden
-          && !(revealArmed && edgeRevealed)
+        readonly property bool autoHidden: hasScreensaver || (isEffectivelyHidden && !edgeRevealed && !root.manuallyHidden)
+        readonly property bool islandHidden: manuallyHiddenAtRest || autoHidden
 
         // Only the island takes input, except while a view is open: then the
         // whole screen does, so outsideArea can close it. While the island can
@@ -626,6 +689,7 @@ Item {
         mask: Region {
           item: root.closesOnOutsideClick ? outsideArea : window.islandHidden ? null : island
           regions: [
+            Region { item: window.dragRevealArmed ? dragRevealStrip : null },
             Region { item: window.revealArmed ? revealStrip : null },
             Region { item: window.revealArmed && window.edgeRevealed ? revealBridge : null },
             Region { item: satellitePill && satellitePill.shown && satellitePill.visible ? satellitePill : null },
@@ -642,6 +706,16 @@ Item {
           onPressed: function(mouse) {
             if (!island.contains(mapToItem(island, mouse.x, mouse.y))) root.view = "rest"
           }
+        }
+
+        Item {
+          id: dragRevealStrip
+          anchors.top: parent.top
+          anchors.horizontalCenter: parent.horizontalCenter
+          width: Math.max(100, Math.min(280, island.targetWidth))
+          height: 6
+          visible: window.dragRevealArmed
+          EdgeDrag { revealing: true; enabled: window.dragRevealArmed }
         }
 
         Item {
@@ -699,7 +773,7 @@ Item {
           id: hoverCapsules
           host: root
           island: island
-          shown: (root.hoverMode === "capsules") && island.capsulesShown && !window.islandHidden
+          shown: (root.hoverMode === "capsules") && island.capsulesShown && !window.islandHidden && !window.edgeDragActive
           anchors.fill: parent
           // Under the island, so the capsules can start tucked beneath it.
           z: -1
@@ -714,7 +788,8 @@ Item {
           AutoHideMotion {
             id: hideMotion
             theme: root.theme
-            hidden: window.islandHidden
+            hidden: window.autoHidden
+            edgeProgress: manualMotion.value / 100
             expandedWidth: Math.max(40, widthSpring.value)
             expandedHeight: Math.max(28, heightSpring.value)
             restY: root.settings.notch ? 0 : 8
@@ -820,9 +895,14 @@ Item {
           scale: root.settings.notch ? 1.0 : (1 + liftSpring.value * 0.00018 - pressSpring.value * 0.0003)
           // With the notch the island hangs from the top edge, so it scales from there.
           transformOrigin: root.settings.notch ? Item.Top : Item.Center
-          HoverHandler { id: clockHover; enabled: root.view === "rest" }
+          EdgeDrag {
+            revealing: false
+            enabled: window.edgeDragAllowed && !window.islandHidden
+          }
+          HoverHandler { id: clockHover; enabled: root.view === "rest" && !window.edgeDragActive }
           HoverHandler {
             id: islandPointerHover
+            enabled: !window.edgeDragActive
             onHoveredChanged: {
               if (hovered) {
                 edgeLeaveTimer.stop()
@@ -976,7 +1056,7 @@ Item {
           id: satellitePill
           host: root
           shape: island
-          visible: opacity > 0.01 && hideMotion.contentOpacity > 0.95 && !window.islandHidden
+          visible: opacity > 0.01 && hideMotion.contentOpacity > 0.95 && !window.islandHidden && !window.edgeDragActive
           hasMediaInGlance: glanceBar ? (glanceBar.left1Kind === "media" || glanceBar.left2Kind === "media"
             || glanceBar.right1Kind === "media" || glanceBar.right2Kind === "media") : false
         }
@@ -991,7 +1071,7 @@ Item {
       // change of focus would re-tile two monitors.
       PanelWindow {
         screen: window.screen
-        visible: (window.visible || !root.outputPinned) && root.settings.reserveSpace && !root.barHidden && !window.autoHideCondition
+        visible: (window.visible || !root.outputPinned) && root.settings.reserveSpace && !root.barHidden && !window.autoHideCondition && !root.manuallyHidden
         color: "transparent"
         anchors { top: true; left: true; right: true }
         exclusionMode: ExclusionMode.Normal
