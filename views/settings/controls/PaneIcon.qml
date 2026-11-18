@@ -5,10 +5,11 @@ import QtQuick.Shapes
 
 Item {
   id: paneIcon
-  required property var view
+  property var view: null
+  property var host: view?.host ?? null
   property string glyph: ""
-  property color tint: paneIcon.view.accent
-  property bool neutral: !paneIcon.view.settings.colorfulSettingsIcons
+  property color tint: paneIcon.view?.accent ?? paneIcon.host.theme.accent
+  property bool neutral: !paneIcon.host.settings.colorfulSettingsIcons
   property bool onAccent: false
   // Drawn in place of the glyph while colorful, each centred at x, y (as a
   // share of the icon's size), and cut to its shape: { glyph, color,
@@ -27,10 +28,12 @@ Item {
   implicitWidth: 20
   implicitHeight: 20
 
-  readonly property color base: neutral ? (onAccent ? view.accentInk : view.well) : tint
+  readonly property color base: neutral
+    ? (onAccent ? (view?.accentInk ?? host.theme.accentText) : (view?.well ?? host.theme.well)) : tint
   readonly property color lit: neutral ? Qt.lighter(base, 1.08) : Qt.lighter(tint, 1.32)
   readonly property color shade: neutral ? Qt.darker(base, 1.04) : Qt.darker(tint, 1.12)
-  readonly property color ink: neutral ? (onAccent ? view.accent : view.textMuted) : "#ffffff"
+  readonly property color ink: neutral
+    ? (onAccent ? (view?.accent ?? host.theme.accent) : (view?.textMuted ?? host.theme.secondary)) : "#ffffff"
   readonly property bool large: width >= 36
 
   function squircle(w, h, inset) {
@@ -65,7 +68,7 @@ Item {
       y: (parent.height - ink.tightBoundingRect.height) / 2 - ink.tightBoundingRect.y - baselineOffset
       text: Locale.I18n.tr(paneIcon.glyph)
       color: paneIcon.ink
-      font.family: paneIcon.view.host.theme.fontFamily
+      font.family: paneIcon.host.theme.fontFamily
       font.pixelSize: Math.round(paneIcon.width * 0.62)
     }
   }
@@ -121,7 +124,7 @@ Item {
       visible: !paneIcon.neutral && !paneIcon.layered
       text: Locale.I18n.tr(paneIcon.glyph)
       color: Qt.rgba(0, 0, 0, 0.18)
-      font.family: paneIcon.view.host.theme.fontFamily
+      font.family: paneIcon.host.theme.fontFamily
       font.pixelSize: glyphText.font.pixelSize
     }
     Text {
@@ -130,7 +133,7 @@ Item {
       visible: !paneIcon.layered
       text: Locale.I18n.tr(paneIcon.glyph)
       color: paneIcon.ink
-      font.family: paneIcon.view.host.theme.fontFamily
+      font.family: paneIcon.host.theme.fontFamily
       font.pixelSize: Math.round(paneIcon.width * 0.6)
     }
     // The layers, cut to the icon's shape.
@@ -165,7 +168,7 @@ Item {
           readonly property real size: paneIcon.width * (modelData.size || 0)
           readonly property bool shaped: !!(modelData.circle || modelData.rect)
           readonly property bool lined: !!modelData.line
-          readonly property var today: paneIcon.view.host.clockDate
+          readonly property var today: paneIcon.host.clockDate
           x: lined ? 0 : paneIcon.width * modelData.x - width / 2
           y: lined ? 0 : paneIcon.height * modelData.y - height / 2
           width: lined ? paneIcon.width : modelData.rect ? paneIcon.width * modelData.width : modelData.circle ? size : layerGlyph.implicitWidth
@@ -205,8 +208,8 @@ Item {
               : layer.modelData.date === "day" ? String(layer.today.getDate())
               : layer.modelData.glyph || "")
             color: layer.modelData.color
-            font.family: layer.modelData.date ? paneIcon.view.host.theme.textFontFamily : paneIcon.view.host.theme.fontFamily
-            font.letterSpacing: paneIcon.view.host.theme.tracking(layer.modelData.date ? paneIcon.view.host.theme.textFontFamily : paneIcon.view.host.theme.fontFamily, Math.round(layer.size))
+            font.family: layer.modelData.date ? paneIcon.host.theme.textFontFamily : paneIcon.host.theme.fontFamily
+            font.letterSpacing: paneIcon.host.theme.tracking(layer.modelData.date ? paneIcon.host.theme.textFontFamily : paneIcon.host.theme.fontFamily, Math.round(layer.size))
             font.weight: layer.modelData.weight || Font.Normal
             font.pixelSize: Math.round(layer.size)
           }

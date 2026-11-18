@@ -3,6 +3,7 @@ import "../../i18n" as Locale
 import Quickshell
 import Quickshell.Io
 import "../../components"
+import "../settings/controls"
 import "../../components/IconSource.js" as IconSource
 // Omarchy's own menu model: parsing, merging your overrides, conditions,
 // labels, and search ranking all behave exactly like its menu.
@@ -305,13 +306,7 @@ ListPicker {
     }
     if (q) list.sort(function(a, b) { return a.score !== b.score ? a.score - b.score : a.path.localeCompare(b.path) })
     var results = list.map(function(r) { r.key = r.itemId; return r })
-    if (q && host.addons.option("ask", "menuSearch")) {
-      var addonRows = host.addons.launcherRows(q)
-      var first = addonRows.filter(function(row) { return row.first || !results.length })
-      var last = addonRows.filter(function(row) { return first.indexOf(row) === -1 })
-      return first.concat(results, last)
-    }
-    return results
+    return host.addons.searchResults(q, results, host.addons.option("ask", "menuSearch"), active === "root")
   }
 
   function openMenu(id, push) {
@@ -367,10 +362,21 @@ ListPicker {
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
         width: 28; height: 28; radius: 8
-        color: menuRow.isAddon && menuRow.entry.tile ? menuRow.entry.tile : menu.host.theme.fill("subtle")
+        color: shortcutIcon.active ? "transparent" : menuRow.isAddon && menuRow.entry.tile ? menuRow.entry.tile : menu.host.theme.fill("subtle")
+        Loader {
+          id: shortcutIcon
+          anchors.fill: parent
+          active: menuRow.isAddon && menuRow.entry.iconLayers !== undefined
+          sourceComponent: PaneIcon {
+            host: menu.host
+            glyph: menuRow.entry.glyph || ""
+            tint: menuRow.entry.tile
+            layers: menuRow.entry.iconLayers || []
+          }
+        }
         Text {
           anchors.centerIn: parent
-          visible: menuRow.isAddon
+          visible: menuRow.isAddon && !shortcutIcon.active
           text: Locale.I18n.tr(menuRow.isAddon ? String(menuRow.entry.glyph || "") : "")
           color: (menuRow.entry && menuRow.entry.ink) || "#ffffff"
           font.family: menu.host.theme.fontFamily

@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Widgets
 import "../../components"
+import "../settings/controls"
 import "../../components/IconSource.js" as IconSource
 // Omarchy's own launcher ranking, so results match its menu exactly.
 import "file:///usr/share/omarchy/shell/services/AppSearch.js" as AppSearch
@@ -11,21 +12,13 @@ import "file:///usr/share/omarchy/shell/services/AppSearch.js" as AppSearch
 // Application launcher: the shared list view over the installed apps (icon
 // tile and name). Search matches names, descriptions, and keywords. Uses the
 // same app set as Omarchy's launcher (desktop entries minus its hidden lists)
-// and launches the same way. Enabled addons can add rows for the typed text
-// (Ask AI's, see addons/Addon.qml): after the apps, or first when they say
-// so or no app matches.
+// and launches the same way. Addon shortcuts and Ask AI share the menu's
+// search results.
 ListPicker {
   id: launcher
   placeholder: Locale.I18n.tr(["Search"].concat(host.addons.launcherHints).join(" or "))
   emptyText: Locale.I18n.tr("No apps match")
-  items: {
-    var text = query.trim()
-    if (!text) return results
-    var rows = host.addons.launcherRows(text)
-    var first = rows.filter(function(row) { return row.first || !results.length })
-    var last = rows.filter(function(row) { return first.indexOf(row) === -1 })
-    return first.concat(results, last)
-  }
+  items: host.addons.searchResults(query, results, true, true)
   onChosen: function(entry) { if (entry.addonRow) entry.run(); else launch(entry) }
   onActiveChanged: if (active) hiddenScan.running = true
 
@@ -60,12 +53,23 @@ ListPicker {
         anchors.verticalCenter: parent.verticalCenter
         width: 36; height: 36; radius: 10
         // App icons carry their own shape; only glyphs sit on a tile.
-        color: appRow.isAddon && appRow.entry.tile ? appRow.entry.tile
+        color: shortcutIcon.active ? "transparent" : appRow.isAddon && appRow.entry.tile ? appRow.entry.tile
           : !appRow.isAddon && appIcon.status === Image.Ready ? "transparent"
           : launcher.host.theme.fill("subtle")
+        Loader {
+          id: shortcutIcon
+          anchors.fill: parent
+          active: appRow.isAddon && appRow.entry.iconLayers !== undefined
+          sourceComponent: PaneIcon {
+            host: launcher.host
+            glyph: appRow.entry.glyph || ""
+            tint: appRow.entry.tile
+            layers: appRow.entry.iconLayers || []
+          }
+        }
         Text {
           anchors.centerIn: parent
-          visible: appRow.isAddon
+          visible: appRow.isAddon && !shortcutIcon.active
           text: Locale.I18n.tr(appRow.isAddon ? appRow.entry.glyph || "" : "")
           color: appRow.isAddon && appRow.entry.ink ? appRow.entry.ink : launcher.host.theme.text
           font.family: "JetBrainsMono Nerd Font"

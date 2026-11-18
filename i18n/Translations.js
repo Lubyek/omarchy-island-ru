@@ -119,6 +119,8 @@ var ru = {
   "Extras that stay unloaded until you add them.": "Дополнения загружаются только после включения.",
   "Keyboard shortcuts that open each part of the island.": "Сочетания клавиш для открытия панелей Island.",
   "Addons": "Дополнения",
+  "Island Addon": "Дополнение Island",
+  "Enable and Open": "Включить и открыть",
   "Keybinds": "Горячие клавиши",
   "Search": "Поиск",
   "No Results": "Ничего не найдено",
