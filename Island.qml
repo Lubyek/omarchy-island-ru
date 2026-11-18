@@ -602,8 +602,8 @@ Item {
 
         property bool edgeRevealed: false
         readonly property bool manuallyHiddenAtRest: root.manuallyHidden && root.view === "rest"
-        readonly property bool edgeHoldAllowed: visible && !hasScreensaver && root.view === "rest"
-        readonly property bool holdRevealArmed: edgeHoldAllowed && root.manuallyHidden
+        readonly property bool edgeClickAllowed: visible && !hasScreensaver && root.view === "rest"
+        readonly property bool clickRevealArmed: edgeClickAllowed && root.manuallyHidden
 
         MotionSpring {
           id: manualMotion
@@ -613,14 +613,13 @@ Item {
           target: window.manuallyHiddenAtRest ? 100 : 0
         }
 
-        component EdgeHold: MouseArea {
+        component EdgeClick: MouseArea {
           required property bool revealing
           anchors.fill: parent
           z: 10
           acceptedButtons: Qt.RightButton
-          pressAndHoldInterval: 400
 
-          onPressAndHold: {
+          onClicked: {
             if (revealing && window.isEffectivelyHidden) {
               window.edgeRevealed = true
               edgeLeaveTimer.restart()
@@ -660,7 +659,7 @@ Item {
         mask: Region {
           item: root.closesOnOutsideClick ? outsideArea : window.islandHidden ? null : island
           regions: [
-            Region { item: window.holdRevealArmed ? holdRevealStrip : null },
+            Region { item: window.clickRevealArmed ? clickRevealStrip : null },
             Region { item: window.revealArmed ? revealStrip : null },
             Region { item: window.revealArmed && window.edgeRevealed ? revealBridge : null },
             Region { item: satellitePill && satellitePill.shown && satellitePill.visible ? satellitePill : null },
@@ -680,13 +679,13 @@ Item {
         }
 
         Item {
-          id: holdRevealStrip
+          id: clickRevealStrip
           anchors.top: parent.top
           anchors.horizontalCenter: parent.horizontalCenter
           width: Math.max(100, Math.min(280, island.targetWidth))
           height: 6
-          visible: window.holdRevealArmed
-          EdgeHold { revealing: true; enabled: window.holdRevealArmed }
+          visible: window.clickRevealArmed
+          EdgeClick { revealing: true; enabled: window.clickRevealArmed }
         }
 
         Item {
@@ -866,9 +865,9 @@ Item {
           scale: root.settings.notch ? 1.0 : (1 + liftSpring.value * 0.00018 - pressSpring.value * 0.0003)
           // With the notch the island hangs from the top edge, so it scales from there.
           transformOrigin: root.settings.notch ? Item.Top : Item.Center
-          EdgeHold {
+          EdgeClick {
             revealing: false
-            enabled: window.edgeHoldAllowed && !window.islandHidden
+            enabled: window.edgeClickAllowed && !window.islandHidden
           }
           HoverHandler { id: clockHover; enabled: root.view === "rest" }
           HoverHandler {
